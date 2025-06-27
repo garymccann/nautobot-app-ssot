@@ -228,6 +228,7 @@ PLUGINS_CONFIG = {
         "enable_librenms": is_truthy(os.getenv("NAUTOBOT_SSOT_ENABLE_LIBRENMS", "false")),
         "enable_meraki": is_truthy(os.getenv("NAUTOBOT_SSOT_ENABLE_MERAKI")),
         "enable_servicenow": is_truthy(os.getenv("NAUTOBOT_SSOT_ENABLE_SERVICENOW")),
+        "enable_servicenow_inbound": is_truthy(os.getenv("NAUTOBOT_SSOT_ENABLE_SERVICENOW_INBOUND")),
         "enable_slurpit": is_truthy(os.getenv("NAUTOBOT_SSOT_ENABLE_SLURPIT")),
         "enable_solarwinds": is_truthy(os.getenv("NAUTOBOT_SSOT_ENABLE_SOLARWINDS")),
         "enable_vsphere": is_truthy(os.getenv("NAUTOBOT_SSOT_ENABLE_VSPHERE")),

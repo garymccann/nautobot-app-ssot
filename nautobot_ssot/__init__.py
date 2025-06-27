@@ -112,6 +112,7 @@ class NautobotSSOTAppConfig(NautobotAppConfig):
         "enable_librenms": False,
         "enable_meraki": False,
         "enable_servicenow": False,
+        "enable_servicenow_inbound": False,
         "enable_slurpit": False,
         "enable_solarwinds": False,
         "enable_itential": False,

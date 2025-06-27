@@ -1,0 +1,15 @@
+# Mapping of ServiceNow tables to Nautobot models
+# Example structure:
+# <servicenow_table>:
+#   model: <nautobot_app_label>.<model_name>
+#   identifiers:
+#     - <field>
+#   attributes:
+#     <servicenow_field>: <nautobot_field>
+cmdb_ci_server:
+  model: dcim.device
+  identifiers:
+    - name
+  attributes:
+    serial_number: serial
+    sys_class_name: device_type__model
