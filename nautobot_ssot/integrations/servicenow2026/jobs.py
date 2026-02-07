@@ -5,6 +5,7 @@ from typing import List, Optional
 
 from diffsync.enum import DiffSyncFlags
 from django.core.exceptions import ObjectDoesNotExist
+from django.db.models import Model
 from django.templatetags.static import static
 from nautobot.extras.choices import SecretsGroupAccessTypeChoices, SecretsGroupSecretTypeChoices
 from nautobot.extras.jobs import BooleanVar, ChoiceVar, ObjectVar, StringVar
@@ -21,6 +22,45 @@ name = "ServiceNow 2026 SSoT"  # pylint: disable=invalid-name
 
 class JobConfigError(Exception):
     """Custom exception for invalid job configuration."""
+
+
+class ServiceNowSyncLogMixin:
+    """Mixin to ensure sync log diffs are JSON-serializable."""
+
+    @classmethod
+    def _serialize_log_value(cls, value):
+        """Return JSON-safe values for SyncLogEntry.diff.
+
+        Args:
+            value: Diff value to serialize.
+
+        Returns:
+            JSON-safe value.
+        """
+        if isinstance(value, Model):
+            return str(value)
+        if isinstance(value, dict):
+            return {key: cls._serialize_log_value(val) for key, val in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [cls._serialize_log_value(item) for item in value]
+        return value
+
+    def sync_log(self, *args, **kwargs):
+        """Log a sync message with JSON-safe diff payloads.
+
+        Args:
+            *args: Positional args passed to sync_log.
+            **kwargs: Keyword args passed to sync_log.
+        """
+        if "diff" in kwargs:
+            diff = kwargs.get("diff")
+            if diff is not None:
+                kwargs["diff"] = self._serialize_log_value(diff)
+        elif len(args) >= 4:
+            args = list(args)
+            if args[3] is not None:
+                args[3] = self._serialize_log_value(args[3])
+        super().sync_log(*args, **kwargs)
 
 
 def _parse_csv(value: Optional[str]) -> List[str]:
@@ -99,7 +139,7 @@ def _build_client(integration: ExternalIntegration, backend: str) -> ServiceNowC
     return ServiceNowClient(config=_build_config(integration), backend=backend)
 
 
-class ServiceNowToNautobot(DataSource):  # pylint: disable=too-many-instance-attributes
+class ServiceNowToNautobot(ServiceNowSyncLogMixin, DataSource):  # pylint: disable=too-many-instance-attributes
     """Sync data from ServiceNow into Nautobot."""
 
     integration = ObjectVar(
@@ -224,7 +264,7 @@ class ServiceNowToNautobot(DataSource):  # pylint: disable=too-many-instance-att
         super().run(dryrun=dryrun, memory_profiling=memory_profiling, *args, **kwargs)
 
 
-class NautobotToServiceNow(DataTarget):  # pylint: disable=too-many-instance-attributes
+class NautobotToServiceNow(ServiceNowSyncLogMixin, DataTarget):  # pylint: disable=too-many-instance-attributes
     """Sync data from Nautobot into ServiceNow."""
 
     integration = ObjectVar(
