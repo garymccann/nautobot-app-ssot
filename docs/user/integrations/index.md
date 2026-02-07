@@ -14,6 +14,7 @@ This Nautobot app supports the following integrations:
 - [LibreNMS](./librenms.md)
 - [Cisco Meraki](./meraki.md)
 - [ServiceNow](./servicenow.md)
+- [ServiceNow 2026](./servicenow2026.md)
 - [Slurpit](./slurpit.md)
 - [SolarWinds](./solarwinds.md)
 - [vSphere](./vsphere.md)

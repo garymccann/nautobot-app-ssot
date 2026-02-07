@@ -1,0 +1,20 @@
+[
+  {
+    "sys_id": "loc-001",
+    "name": "HQ",
+    "parent": null,
+    "location_type": "Site",
+    "full_name": "HQ",
+    "latitude": "40.0",
+    "longitude": "-75.0"
+  },
+  {
+    "sys_id": "loc-002",
+    "name": "HQ-1",
+    "parent": {"value": "loc-001"},
+    "location_type": "Building",
+    "full_name": "HQ/HQ-1",
+    "latitude": "40.1",
+    "longitude": "-75.1"
+  }
+]

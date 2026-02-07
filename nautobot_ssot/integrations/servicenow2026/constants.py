@@ -1,0 +1,22 @@
+"""Constants for ServiceNow 2026 integration."""
+
+from pathlib import Path
+
+SERVICENOW_TABLE_COMPANY = "core_company"
+SERVICENOW_TABLE_LOCATION = "cmn_location"
+SERVICENOW_TABLE_MODEL = "cmdb_model"
+SERVICENOW_TABLE_DEVICE = "cmdb_ci_netgear"
+
+SERVICENOW_METADATA_SYS_ID = "ServiceNow Sys ID"
+SERVICENOW_METADATA_URL = "ServiceNow URL"
+SERVICENOW_METADATA_TABLE = "ServiceNow Table"
+SERVICENOW_METADATA_INSTANCE = "ServiceNow Instance"
+
+SERVICENOW_METADATA_TYPES = (
+    SERVICENOW_METADATA_SYS_ID,
+    SERVICENOW_METADATA_URL,
+    SERVICENOW_METADATA_TABLE,
+    SERVICENOW_METADATA_INSTANCE,
+)
+
+DEFAULT_MAPPING_PATH = Path(__file__).resolve().parent / "mapping.yaml"

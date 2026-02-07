@@ -1,0 +1,9 @@
+[
+  {
+    "sys_id": "dev-001",
+    "name": "rtr-01",
+    "location": {"value": "loc-002"},
+    "model_id": {"value": "model-001"},
+    "serial_number": "ABC123"
+  }
+]
