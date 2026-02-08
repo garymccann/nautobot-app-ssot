@@ -1,8 +1,0 @@
-[
-  {
-    "sys_id": "model-001",
-    "name": "Router 1000",
-    "manufacturer": {"value": "comp-001"},
-    "model_number": "R1000"
-  }
-]

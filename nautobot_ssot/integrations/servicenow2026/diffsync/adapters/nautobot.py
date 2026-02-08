@@ -8,23 +8,23 @@ from typing_extensions import get_type_hints
 
 from nautobot_ssot.contrib.adapter import NautobotAdapter
 from nautobot_ssot.integrations.servicenow2026 import constants
-from nautobot_ssot.integrations.servicenow2026.annotations import ObjectMetadataAnnotation
-from nautobot_ssot.integrations.servicenow2026.diffsync.models import nautobot as models
+from nautobot_ssot.integrations.servicenow2026.diffsync import models
+from nautobot_ssot.integrations.servicenow2026.object_metadata import ObjectMetadataAnnotation
 from nautobot_ssot.integrations.servicenow2026.utils import metadata as metadata_utils
 
 
 class TheNautobotAdapter(NautobotAdapter):
     """DiffSync adapter loading data from Nautobot for ServiceNow 2026."""
 
-    tenant = models.NautobotTenant
-    manufacturer = models.NautobotManufacturer
-    platform = models.NautobotPlatform
-    device_type = models.NautobotDeviceType
-    location = models.NautobotLocation
-    device = models.NautobotDevice
+    company = models.Company
+    manufacturer = models.Manufacturer
+    platform = models.Platform
+    device_type = models.DeviceType
+    location = models.Location
+    device = models.Device
 
     top_level = (
-        "tenant",
+        "company",
         "manufacturer",
         "platform",
         "device_type",

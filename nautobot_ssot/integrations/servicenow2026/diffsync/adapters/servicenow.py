@@ -1,5 +1,8 @@
 """ServiceNow DiffSync adapter for ServiceNow 2026."""
 
+import json
+import logging
+import os
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Set
 
@@ -8,10 +11,17 @@ from diffsync.exceptions import ObjectAlreadyExists
 from nautobot.tenancy.models import Tenant
 
 from nautobot_ssot.integrations.servicenow2026.client import ServiceNowClient
-from nautobot_ssot.integrations.servicenow2026.diffsync.models import servicenow as models
+from nautobot_ssot.integrations.servicenow2026.diffsync import models
 from nautobot_ssot.integrations.servicenow2026.mapping import load_mapping, map_record
 from nautobot_ssot.integrations.servicenow2026.utils import metadata as metadata_utils
 from nautobot_ssot.integrations.servicenow2026.utils.metadata import build_servicenow_url
+
+
+def _is_truthy(value: Optional[str]) -> bool:
+    """Return True if a string value represents a truthy flag."""
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attributes
@@ -46,12 +56,12 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
         },
     }
 
-    company = models.ServiceNowCompany
-    manufacturer = models.ServiceNowManufacturer
-    platform = models.ServiceNowPlatform
-    device_type = models.ServiceNowDeviceType
-    location = models.ServiceNowLocation
-    device = models.ServiceNowDevice
+    company = models.Company
+    manufacturer = models.Manufacturer
+    platform = models.Platform
+    device_type = models.DeviceType
+    location = models.Location
+    device = models.Device
 
     top_level = (
         "company",
@@ -95,6 +105,7 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
         self.root_location_sys_id = root_location_sys_id
         self.mapping = {}
         self.loaded_sys_ids: Dict[str, Set[str]] = {}
+        self.dump_fixtures = _is_truthy(os.getenv("NAUTOBOT_SSOT_SERVICENOW_DUMP_FIXTURES"))
 
     def load(self):
         """Load all ServiceNow data into DiffSync models."""
@@ -131,10 +142,9 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
         """
         mappings = entry.get("mappings", [])
         table_query = entry.get("table_query", {})
-        records = [
-            self._build_attributes(record, mappings, table, model_name)
-            for record in self._iter_records(table, table_query)
-        ]
+        raw_records = list(self._iter_records(table, table_query))
+        self._log_fixture_dump(model_name, table, raw_records)
+        records = [self._build_attributes(record, mappings, table, model_name) for record in raw_records]
         records = [record for record in records if record.get("sys_id")]
         records = self._order_records(model_name, records)
         records = self._apply_duplicate_name_suffixes(model_name, records)
@@ -170,6 +180,12 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
             except ObjectAlreadyExists:
                 if self.job:
                     self.job.logger.warning("Duplicate %s with sys_id %s skipped.", model_name, record.get("sys_id"))
+
+    def _log_fixture_dump(self, model_name: str, table: str, records: List[Dict[str, Any]]) -> None:
+        """Log raw ServiceNow records for fixture capture."""
+        logger = self.job.logger if self.job else logging.getLogger(__name__)
+        payload = json.dumps(records, ensure_ascii=True, default=str, sort_keys=True, indent=2)
+        logger.info("ServiceNow fixture dump for %s (%s):\n%s", model_name, table, payload)
 
     def _update_loaded_sys_ids(self, model_name: str, records: List[Dict[str, Any]]) -> None:
         """Track sys_ids loaded for reference validation.
@@ -359,9 +375,12 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
         attributes["sys_id"] = record.get("sys_id")
         attributes["servicenow_sys_id"] = record.get("sys_id")
         attributes["servicenow_table"] = table
-        instance = self.client.get_instance_name() or self.client.get_base_url()
-        attributes["servicenow_instance"] = instance
-        attributes["servicenow_url"] = build_servicenow_url(instance=instance, table=table, sys_id=record.get("sys_id"))
+        attributes["servicenow_instance"] = self.client.integration.remote_url
+        attributes["servicenow_url"] = build_servicenow_url(
+            instance=self.client.integration.remote_url,
+            table=table,
+            sys_id=record.get("sys_id"),
+        )
         return attributes
 
     @staticmethod

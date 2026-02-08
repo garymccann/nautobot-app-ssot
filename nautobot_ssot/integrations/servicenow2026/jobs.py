@@ -1,17 +1,18 @@
 """Jobs for ServiceNow 2026 integration."""
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from diffsync.enum import DiffSyncFlags
-from django.core.exceptions import ObjectDoesNotExist
-from django.db.models import Model
 from django.templatetags.static import static
-from nautobot.extras.choices import SecretsGroupAccessTypeChoices, SecretsGroupSecretTypeChoices
-from nautobot.extras.jobs import BooleanVar, ChoiceVar, ObjectVar, StringVar
+from nautobot.extras.jobs import BooleanVar, ChoiceVar, Job, ObjectVar, StringVar
 from nautobot.extras.models import ExternalIntegration
 
-from nautobot_ssot.integrations.servicenow2026.client import ServiceNowClient, ServiceNowConfig
+from nautobot_ssot.integrations.servicenow2026.client import (
+    ServiceNowBackendBase,
+    ServiceNowClient,
+    ServiceNowClientError,
+)
 from nautobot_ssot.integrations.servicenow2026.diffsync.adapters.nautobot import TheNautobotAdapter
 from nautobot_ssot.integrations.servicenow2026.diffsync.adapters.servicenow import ServiceNowAdapter
 from nautobot_ssot.integrations.servicenow2026.mapping import load_mapping
@@ -20,47 +21,107 @@ from nautobot_ssot.jobs.base import DataMapping, DataSource, DataTarget
 name = "ServiceNow 2026 SSoT"  # pylint: disable=invalid-name
 
 
+def list_mapping_profiles():
+    """Working on it."""
+    pass
+
+
+class _ServiceNow2BaseJob(Job):
+    """Shared configuration for ServiceNow jobs."""
+
+    def __init__(self):
+        """Initialize job defaults."""
+        self.debug: bool
+        self.integration: ExternalIntegration
+        self.backend: ServiceNowBackendBase
+        super().__init__()
+
+    debug_var = BooleanVar(description="Enable verbose logging.", default=False)
+
+    servicenow_instance = ObjectVar(
+        model=ExternalIntegration,
+        queryset=ExternalIntegration.objects.all(),
+        display_field="display",
+        label="ServiceNow Instance",
+        required=True,
+    )
+    backend_choice = ChoiceVar(
+        choices=(
+            ("pysnc", "PySNC"),
+            ("pysnow", "PySnow"),
+        ),
+        default="pysnc",
+        label="ServiceNow Client Backend",
+    )
+
+    # mapping_profile = ChoiceVar(
+    #     choices=list_mapping_profiles(),
+    #     required=False,
+    #     description="Mapping profile to use for ServiceNow2 sync.",
+    # )
+
+    delete_records = BooleanVar(description="Delete records missing from the source.")
+
+    mapping_data: dict[str, Any]
+
+    @staticmethod
+    def _build_client(integration: ExternalIntegration, backend: str) -> ServiceNowClient:
+        """Prepare and return a ServiceNowClient instance based on the given integration and backend.
+
+        Args:
+            integration: ExternalIntegration instance.
+            backend: Backend name (pysnc, pysnow).
+
+        Returns:
+            ServiceNowClient instance.
+        """
+        try:
+            return ServiceNowClient(integration=integration, backend=backend)
+        except (ServiceNowClientError, ServiceNowClientError) as error:
+            raise JobConfigError(str(error)) from error
+
+
 class JobConfigError(Exception):
     """Custom exception for invalid job configuration."""
 
 
-class ServiceNowSyncLogMixin:
-    """Mixin to ensure sync log diffs are JSON-serializable."""
-
-    @classmethod
-    def _serialize_log_value(cls, value):
-        """Return JSON-safe values for SyncLogEntry.diff.
-
-        Args:
-            value: Diff value to serialize.
-
-        Returns:
-            JSON-safe value.
-        """
-        if isinstance(value, Model):
-            return str(value)
-        if isinstance(value, dict):
-            return {key: cls._serialize_log_value(val) for key, val in value.items()}
-        if isinstance(value, (list, tuple, set)):
-            return [cls._serialize_log_value(item) for item in value]
-        return value
-
-    def sync_log(self, *args, **kwargs):
-        """Log a sync message with JSON-safe diff payloads.
-
-        Args:
-            *args: Positional args passed to sync_log.
-            **kwargs: Keyword args passed to sync_log.
-        """
-        if "diff" in kwargs:
-            diff = kwargs.get("diff")
-            if diff is not None:
-                kwargs["diff"] = self._serialize_log_value(diff)
-        elif len(args) >= 4:
-            args = list(args)
-            if args[3] is not None:
-                args[3] = self._serialize_log_value(args[3])
-        super().sync_log(*args, **kwargs)
+# class ServiceNowSyncLogMixin:
+#     """Mixin to ensure sync log diffs are JSON-serializable."""
+#
+#     @classmethod
+#     def _serialize_log_value(cls, value):
+#         """Return JSON-safe values for SyncLogEntry.diff.
+#
+#         Args:
+#             value: Diff value to serialize.
+#
+#         Returns:
+#             JSON-safe value.
+#         """
+#         if isinstance(value, Model):
+#             return str(value)
+#         if isinstance(value, dict):
+#             return {key: cls._serialize_log_value(val) for key, val in value.items()}
+#         if isinstance(value, (list, tuple, set)):
+#             return [cls._serialize_log_value(item) for item in value]
+#         return value
+#
+#     def sync_log(self, *args, **kwargs):
+#         """Log a sync message with JSON-safe diff payloads.
+#
+#         Args:
+#             *args: Positional args passed to sync_log.
+#             **kwargs: Keyword args passed to sync_log.
+#         """
+#         if "diff" in kwargs:
+#             diff = kwargs.get("diff")
+#             if diff is not None:
+#                 kwargs["diff"] = self._serialize_log_value(diff)
+#         elif len(args) >= 4:
+#             args = list(args)
+#             if args[3] is not None:
+#                 args[3] = self._serialize_log_value(args[3])
+#         super().sync_log(*args, **kwargs)
 
 
 def _parse_csv(value: Optional[str]) -> List[str]:
@@ -77,87 +138,9 @@ def _parse_csv(value: Optional[str]) -> List[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _get_secret_value(integration: ExternalIntegration, secret_type: str) -> Optional[str]:
-    """Return a secret value from an ExternalIntegration secrets group.
-
-    Args:
-        integration: ExternalIntegration instance.
-        secret_type: Secret type identifier.
-
-    Returns:
-        Secret value if available, otherwise None.
-    """
-    if not integration.secrets_group:
-        return None
-    try:
-        return integration.secrets_group.get_secret_value(
-            access_type=SecretsGroupAccessTypeChoices.TYPE_HTTP,
-            secret_type=secret_type,
-        )
-    except ObjectDoesNotExist:
-        return None
-
-
-def _build_config(integration: ExternalIntegration) -> ServiceNowConfig:
-    """Build a ServiceNowConfig from an ExternalIntegration.
-
-    Args:
-        integration: ExternalIntegration instance.
-
-    Returns:
-        ServiceNowConfig instance.
-
-    Raises:
-        JobConfigError: If credentials are missing.
-    """
-    token = _get_secret_value(integration, SecretsGroupSecretTypeChoices.TYPE_TOKEN)
-    username = _get_secret_value(integration, SecretsGroupSecretTypeChoices.TYPE_USERNAME)
-    password = _get_secret_value(integration, SecretsGroupSecretTypeChoices.TYPE_PASSWORD)
-
-    if not token and not (username and password):
-        raise JobConfigError("External Integration must provide token or username/password secrets.")
-
-    return ServiceNowConfig(
-        base_url=integration.remote_url,
-        username=username,
-        password=password,
-        token=token,
-        verify_ssl=integration.verify_ssl,
-    )
-
-
-def _build_client(integration: ExternalIntegration, backend: str) -> ServiceNowClient:
-    """Build a ServiceNowClient for job execution.
-
-    Args:
-        integration: ExternalIntegration instance.
-        backend: Backend name (auto, pysnc, pysnow).
-
-    Returns:
-        ServiceNowClient instance.
-    """
-    return ServiceNowClient(config=_build_config(integration), backend=backend)
-
-
-class ServiceNowToNautobot(ServiceNowSyncLogMixin, DataSource):  # pylint: disable=too-many-instance-attributes
+class ServiceNowToNautobot(_ServiceNow2BaseJob, DataSource):  # pylint: disable=too-many-instance-attributes
     """Sync data from ServiceNow into Nautobot."""
 
-    integration = ObjectVar(
-        model=ExternalIntegration,
-        queryset=ExternalIntegration.objects.all(),
-        display_field="display",
-        label="ServiceNow Instance",
-        required=True,
-    )
-    backend = ChoiceVar(
-        choices=(
-            ("auto", "Auto"),
-            ("pysnc", "PySNC"),
-            ("pysnow", "PySnow"),
-        ),
-        default="pysnc",
-        label="ServiceNow Client Backend",
-    )
     mapping_path = StringVar(
         label="Mapping file path",
         required=False,
@@ -187,7 +170,6 @@ class ServiceNowToNautobot(ServiceNowSyncLogMixin, DataSource):  # pylint: disab
         default=True,
         label="Include locations with unknown type",
     )
-    debug = BooleanVar(description="Enable verbose logging.", default=False)
 
     def __init__(self):
         """Initialize job defaults."""
@@ -197,11 +179,17 @@ class ServiceNowToNautobot(ServiceNowSyncLogMixin, DataSource):  # pylint: disab
     class Meta:  # pylint: disable=too-few-public-methods
         """Metadata about this Job."""
 
-        name = "ServiceNow_to_Nautobot"
+        """Metadata about this ServiceNow Data Source Job."""
+
+        name = "ServiceNow ⟹ Nautobot"
         data_source = "ServiceNow"
         data_source_icon = static("nautobot_ssot_servicenow/ServiceNow_logo.svg")
+        data_target = "Nautobot"
         description = "Synchronize data from ServiceNow into Nautobot."
-        has_sensitive_variables: bool = False
+        has_sensitive_variables = False
+        is_singleton = True
+        soft_time_limit = 21600  # 6 hours
+        time_limit = 86400  # 24 hours
 
     @classmethod
     def data_mappings(cls):
@@ -219,9 +207,8 @@ class ServiceNowToNautobot(ServiceNowSyncLogMixin, DataSource):  # pylint: disab
         mapping_path = Path(self.mapping_path) if self.mapping_path else None
         mapping = load_mapping(mapping_path)
         self.mapping_defaults = {name: entry.get("defaults", {}) for name, entry in mapping.items()}
-        client = _build_client(self.integration, self.backend)
         self.source_adapter = ServiceNowAdapter(
-            client=client,
+            client=self._build_client(self.integration, self.backend),
             job=self,
             mapping_path=mapping_path,
             filter_mode=self.filter_mode,
@@ -240,8 +227,6 @@ class ServiceNowToNautobot(ServiceNowSyncLogMixin, DataSource):  # pylint: disab
         self,
         dryrun,
         memory_profiling,
-        integration,
-        backend,
         *args,
         **kwargs,
     ):
@@ -253,8 +238,8 @@ class ServiceNowToNautobot(ServiceNowSyncLogMixin, DataSource):  # pylint: disab
         """
         self.dryrun = dryrun
         self.memory_profiling = memory_profiling
-        self.integration = integration
-        self.backend = backend
+        self.integration = kwargs.get("servicenow_instance", ExternalIntegration)
+        self.backend = kwargs.get("backend_choice")
         self.mapping_path = kwargs.get("mapping_path")
         self.filter_mode = kwargs.get("filter_mode")
         self.root_location_sys_id = kwargs.get("root_location_sys_id")
@@ -264,25 +249,9 @@ class ServiceNowToNautobot(ServiceNowSyncLogMixin, DataSource):  # pylint: disab
         super().run(dryrun=dryrun, memory_profiling=memory_profiling, *args, **kwargs)
 
 
-class NautobotToServiceNow(ServiceNowSyncLogMixin, DataTarget):  # pylint: disable=too-many-instance-attributes
+class NautobotToServiceNow(_ServiceNow2BaseJob, DataTarget):  # pylint: disable=too-many-instance-attributes
     """Sync data from Nautobot into ServiceNow."""
 
-    integration = ObjectVar(
-        model=ExternalIntegration,
-        queryset=ExternalIntegration.objects.all(),
-        display_field="display",
-        label="ServiceNow Instance",
-        required=True,
-    )
-    backend = ChoiceVar(
-        choices=(
-            ("auto", "Auto"),
-            ("pysnc", "PySNC"),
-            ("pysnow", "PySnow"),
-        ),
-        default="pysnc",
-        label="ServiceNow Client Backend",
-    )
     mapping_path = StringVar(
         label="Mapping file path",
         required=False,
@@ -292,7 +261,6 @@ class NautobotToServiceNow(ServiceNowSyncLogMixin, DataTarget):  # pylint: disab
         description="Delete ServiceNow records not present in Nautobot.",
         default=False,
     )
-    debug = BooleanVar(description="Enable verbose logging.", default=False)
 
     class Meta:  # pylint: disable=too-few-public-methods
         """Metadata about this Job."""
@@ -323,7 +291,7 @@ class NautobotToServiceNow(ServiceNowSyncLogMixin, DataTarget):  # pylint: disab
         mapping_path = Path(self.mapping_path) if self.mapping_path else None
         if mapping_path:
             load_mapping(mapping_path)
-        client = _build_client(self.integration, self.backend)
+        client = self._build_client(self.integration, self.backend)
         self.target_adapter = ServiceNowAdapter(client=client, job=self, mapping_path=mapping_path)
         self.target_adapter.load()
 

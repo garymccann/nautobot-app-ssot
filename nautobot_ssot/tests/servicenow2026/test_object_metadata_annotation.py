@@ -4,16 +4,16 @@ from typing import Annotated, Optional
 from unittest.mock import MagicMock
 
 from django.contrib.contenttypes.models import ContentType
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from nautobot.extras.models.metadata import MetadataType, MetadataTypeDataTypeChoices, ObjectMetadata
 from nautobot.tenancy.models import Tenant
 
-from nautobot_ssot.integrations.servicenow2026.annotations import ObjectMetadataAnnotation
 from nautobot_ssot.integrations.servicenow2026.diffsync.adapters.nautobot import TheNautobotAdapter
-from nautobot_ssot.integrations.servicenow2026.diffsync.models.base import ServiceNowNautobotModel
+from nautobot_ssot.integrations.servicenow2026.diffsync.models import ServiceNowBaseModel
+from nautobot_ssot.integrations.servicenow2026.object_metadata import ObjectMetadataAnnotation
 
 
-class MetadataTenant(ServiceNowNautobotModel):
+class MetadataTenant(ServiceNowBaseModel):
     """Tenant model with ObjectMetadataAnnotation for testing."""
 
     _model = Tenant
@@ -67,3 +67,22 @@ class ObjectMetadataAnnotationTest(TestCase):
             metadata_type=self.metadata_type,
         )
         self.assertEqual(metadata.value, "sys-456")
+
+
+class ObjectMetadataAnnotationInitTest(SimpleTestCase):
+    """Test cases for ObjectMetadataAnnotation __post_init__ handling."""
+
+    def test_post_init_with_key(self):
+        """__post_init__ keeps provided key."""
+        annotation = ObjectMetadataAnnotation(key="ServiceNow Sys ID")
+        self.assertEqual(annotation.key, "ServiceNow Sys ID")
+
+    def test_post_init_with_legacy_name(self):
+        """__post_init__ maps legacy name to key."""
+        annotation = ObjectMetadataAnnotation(name="Legacy Name")
+        self.assertEqual(annotation.key, "Legacy Name")
+
+    def test_post_init_requires_key_or_name(self):
+        """__post_init__ raises ValueError when key/name are missing."""
+        with self.assertRaises(ValueError):
+            ObjectMetadataAnnotation()

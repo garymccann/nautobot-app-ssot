@@ -1,7 +1,6 @@
 """ServiceNow 2026 ObjectMetadata helpers."""
 
 from typing import Optional
-from urllib.parse import urlparse
 
 from django.contrib.contenttypes.models import ContentType
 from nautobot.extras.models.metadata import MetadataType, ObjectMetadata
@@ -89,12 +88,7 @@ def build_servicenow_url(instance: Optional[str], table: Optional[str], sys_id: 
     if not instance or not table or not sys_id:
         return None
     instance = instance.rstrip("/")
-    parsed = urlparse(instance)
-    if parsed.scheme:
-        base_url = instance
-    else:
-        base_url = f"https://{instance}.service-now.com"
-    return f"{base_url}/nav_to.do?uri={table}.do?sys_id={sys_id}"
+    return f"{instance}/nav_to.do?uri={table}.do?sys_id={sys_id}"
 
 
 def get_servicenow_url(obj) -> Optional[str]:

@@ -19,8 +19,10 @@ PLUGINS_CONFIG = {
 
 ## Client Backend
 
-- PySNC is the default backend.
-- PySnow is used automatically if PySNC is unavailable.
+Select the backend in the job form:
+
+- PySNC
+- PySnow
 
 ## Mapping File
 

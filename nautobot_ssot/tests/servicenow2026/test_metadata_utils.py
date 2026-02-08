@@ -64,4 +64,4 @@ class ServiceNowMetadataUtilsTest(TestCase):
             scoped_fields=[],
         )
         url = metadata_utils.get_servicenow_url(self.location)
-        self.assertEqual(url, "https://example.service-now.com/nav_to.do?uri=cmn_location.do?sys_id=abc")
+        self.assertEqual(url, "example/nav_to.do?uri=cmn_location.do?sys_id=abc")

@@ -4,7 +4,7 @@
 
 The ServiceNow 2026 integration synchronizes data between ServiceNow and Nautobot using the ServiceNow
 CMDB tables for locations, companies, device models, and devices. The integration supports both PySNC
-(primary) and PySnow (fallback) client backends.
+and PySnow client backends.
 
 ## Job Options
 

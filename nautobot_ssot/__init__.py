@@ -125,7 +125,7 @@ class NautobotSSOTAppConfig(NautobotAppConfig):
     config_view_name = "plugins:nautobot_ssot:config"
     docs_view_name = "plugins:nautobot_ssot:docs"
     searchable_models = ["sync"]
-    template_extensions = "integrations.servicenow2026.template_extensions"
+    template_extensions = "integrations.servicenow2026.template_extensions.template_extensions"
 
     def ready(self):
         """Trigger callback when database is ready."""
