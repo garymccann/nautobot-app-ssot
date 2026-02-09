@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Create an External Integration record for ServiceNow with the base URL.
-- Attach a Secrets Group containing either a token or username/password.
+- Attach a Secrets Group containing HTTP(S) entries for either a Token or Username/Password.
 
 ## Enable Integration
 
