@@ -43,25 +43,13 @@ class ServiceNowMetadataUtilsTest(TestCase):
         url = metadata_utils.get_servicenow_url(self.location)
         self.assertTrue(url.startswith("https://example.service-now.com"))
 
-    def test_get_servicenow_url_derives_from_parts(self):
-        """get_servicenow_url derives a URL from instance, table, and sys_id."""
+    def test_get_servicenow_url_without_url_metadata(self):
+        """get_servicenow_url returns None when URL metadata is absent."""
         ObjectMetadata.objects.create(
             assigned_object=self.location,
             metadata_type=self.metadata_types[constants.SERVICENOW_METADATA_SYS_ID],
             value="abc",
             scoped_fields=[],
         )
-        ObjectMetadata.objects.create(
-            assigned_object=self.location,
-            metadata_type=self.metadata_types[constants.SERVICENOW_METADATA_TABLE],
-            value="cmn_location",
-            scoped_fields=[],
-        )
-        ObjectMetadata.objects.create(
-            assigned_object=self.location,
-            metadata_type=self.metadata_types[constants.SERVICENOW_METADATA_INSTANCE],
-            value="example",
-            scoped_fields=[],
-        )
         url = metadata_utils.get_servicenow_url(self.location)
-        self.assertEqual(url, "example/nav_to.do?uri=cmn_location.do?sys_id=abc")
+        self.assertIsNone(url)

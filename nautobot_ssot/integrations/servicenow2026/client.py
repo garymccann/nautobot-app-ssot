@@ -6,8 +6,7 @@ import requests
 from nautobot.extras.choices import SecretsGroupAccessTypeChoices, SecretsGroupSecretTypeChoices
 from nautobot.extras.models import ExternalIntegration, SecretsGroupAssociation
 
-DEFAULT_TIMEOUT = 30
-DEFAULT_PAGE_SIZE = 1000
+from nautobot_ssot.integrations.servicenow2026.constants import DEFAULT_CLIENT_PAGE_SIZE
 
 
 class ServiceNowClientError(Exception):
@@ -17,11 +16,11 @@ class ServiceNowClientError(Exception):
 class ServiceNowBackendBase:
     """Base class for ServiceNow client backends."""
 
-    def __init__(self, integration: ExternalIntegration, page_size: int):
+    def __init__(self, integration: ExternalIntegration, page_size: int = 0):
         """Initialize the backend with integration configuration.
 
         Args:
-            integration: ExternalIntegration-like object.
+            integration: ExternalIntegration object.
             page_size: Optional page size for Pagination support.
         """
         self.integration: ExternalIntegration = integration
@@ -29,11 +28,11 @@ class ServiceNowBackendBase:
             raise ServiceNowClientError("Secrets group not found on External Integration.")
         access_type = getattr(integration.secrets_group, "access_type", None)
         if access_type and access_type != SecretsGroupAccessTypeChoices.TYPE_HTTP:
-            raise ServiceNowClientError("Secrets group access type must be HTTP.")
+            raise ServiceNowClientError("Secrets group access type must be HTTP(S).")
         self.token, self.username, self.password = self._get_credentials(self.integration)
         if not self.token and not (self.username and self.password):
             raise ServiceNowClientError("External Integration must provide token or username/password secrets.")
-        self.page_size = page_size
+        self.page_size = page_size if page_size > 0 else DEFAULT_CLIENT_PAGE_SIZE
 
     @staticmethod
     def _get_credentials(integration: ExternalIntegration) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -47,16 +46,16 @@ class ServiceNowBackendBase:
         """
         access_type = SecretsGroupAccessTypeChoices.TYPE_HTTP
         try:
-            token: str = integration.secrets_group.get_secret_value(
+            token: str|None = integration.secrets_group.get_secret_value(
                 access_type=access_type, secret_type=SecretsGroupSecretTypeChoices.TYPE_TOKEN
             )
         except SecretsGroupAssociation.DoesNotExist:
             token = None
         try:
-            username: str = integration.secrets_group.get_secret_value(
+            username: str|None = integration.secrets_group.get_secret_value(
                 access_type=access_type, secret_type=SecretsGroupSecretTypeChoices.TYPE_USERNAME
             )
-            password: str = integration.secrets_group.get_secret_value(
+            password: str|None = integration.secrets_group.get_secret_value(
                 access_type=access_type, secret_type=SecretsGroupSecretTypeChoices.TYPE_PASSWORD
             )
         except SecretsGroupAssociation.DoesNotExist:
@@ -109,6 +108,9 @@ class PySnowBackend(ServiceNowBackendBase):
         """
         super().__init__(integration, page_size)
         try:
+            # Load PySNOW at runtime rather than import time to aid in removing this dependency
+            # in future releases. PySNOW has not been maintained for many years resulting in bugs
+            # and security vulnerabilities.
             from nautobot_ssot.integrations.servicenow.third_party.pysnow import Client as PySnowClient
         except ImportError as exc:
             raise ServiceNowClientError("PySnow is not installed or could not be imported.") from exc
@@ -180,6 +182,30 @@ class PySNCBackend(ServiceNowBackendBase):
         else:
             raise ServiceNowClientError("Username/password or token must be provided.")
 
+    @staticmethod
+    def _fetch_batch(table_client, query: Dict[str, Any], limit: int, offset: int) -> Iterable[Any]:
+        """Fetch a single batch of records from a PySNC table client.
+
+        Args:
+            table_client: PySNC table client instance.
+            query: Query dictionary to apply.
+            limit: Page size.
+            offset: Offset into the result set.
+
+        Returns:
+            Iterable of backend records.
+        """
+        if hasattr(table_client, "get"):
+            try:
+                return table_client.get(query=query, limit=limit, offset=offset)
+            except TypeError:
+                return table_client.get(query=query)
+        if hasattr(table_client, "query"):
+            return table_client.query(query=query)
+        if hasattr(table_client, "all"):
+            return table_client.all()
+        return []
+
     def iter_table(self, table: str, query: Optional[Dict[str, Any]] = None) -> Iterator[Dict[str, Any]]:
         """Iterate over records for a table using PySNC.
 
@@ -222,12 +248,14 @@ class PySNCBackend(ServiceNowBackendBase):
 
         offset = 0
         while True:
-            batch = _pysnc_fetch_batch(table_client, query=query, limit=self.page_size, offset=offset)
+            batch = self._fetch_batch(table_client, query=query, limit=self.page_size, offset=offset)
             if not batch:
                 return
+            batch_counter:int = 0
             for record in batch:
+                batch_counter += 1
                 yield self._coerce_record(record)
-            if len(batch) < self.page_size:
+            if batch_counter <= self.page_size:
                 return
             offset += self.page_size
 
@@ -235,7 +263,7 @@ class PySNCBackend(ServiceNowBackendBase):
 class ServiceNowClient:
     """ServiceNow client wrapper with backend selection."""
 
-    def __init__(self, integration: ExternalIntegration, backend: str, page_size: int = DEFAULT_PAGE_SIZE):
+    def __init__(self, integration: ExternalIntegration, backend: str, page_size: int = DEFAULT_CLIENT_PAGE_SIZE):
         """Initialize the client and select a backend.
 
         Args:
@@ -273,27 +301,3 @@ class ServiceNowClient:
             Iterator of ServiceNow record dictionaries.
         """
         return self.backend.iter_table(table=table, query=query)
-
-
-def _pysnc_fetch_batch(table_client, query: Dict[str, Any], limit: int, offset: int) -> Iterable[Any]:
-    """Fetch a single batch of records from a PySNC table client.
-
-    Args:
-        table_client: PySNC table client instance.
-        query: Query dictionary to apply.
-        limit: Page size.
-        offset: Offset into the result set.
-
-    Returns:
-        Iterable of backend records.
-    """
-    if hasattr(table_client, "get"):
-        try:
-            return table_client.get(query=query, limit=limit, offset=offset)
-        except TypeError:
-            return table_client.get(query=query)
-    if hasattr(table_client, "query"):
-        return table_client.query(query=query)
-    if hasattr(table_client, "all"):
-        return table_client.all()
-    return []

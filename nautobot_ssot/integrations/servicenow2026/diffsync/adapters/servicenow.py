@@ -11,50 +11,16 @@ from diffsync.exceptions import ObjectAlreadyExists
 from nautobot.tenancy.models import Tenant
 
 from nautobot_ssot.integrations.servicenow2026.client import ServiceNowClient
+from nautobot_ssot.integrations.servicenow2026.constants import SERVICENOW_DUPLICATE_NAME_RULES
 from nautobot_ssot.integrations.servicenow2026.diffsync import models
 from nautobot_ssot.integrations.servicenow2026.mapping import load_mapping, map_record
 from nautobot_ssot.integrations.servicenow2026.utils import metadata as metadata_utils
+from nautobot_ssot.integrations.servicenow2026.utils.helpers import _is_truthy
 from nautobot_ssot.integrations.servicenow2026.utils.metadata import build_servicenow_url
-
-
-def _is_truthy(value: Optional[str]) -> bool:
-    """Return True if a string value represents a truthy flag."""
-    if value is None:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attributes
     """DiffSync adapter loading data from ServiceNow."""
-
-    _duplicate_name_rules = {
-        "company": {
-            "name_field": "name",
-            "key_fields": ("name",),
-        },
-        "manufacturer": {
-            "name_field": "name",
-            "key_fields": ("name",),
-        },
-        "platform": {
-            "name_field": "name",
-            "key_fields": ("name",),
-        },
-        "device_type": {
-            "name_field": "model",
-            "key_fields": ("manufacturer_sys_id", "model"),
-            "allow_none_fields": ("manufacturer_sys_id",),
-        },
-        "location": {
-            "name_field": "name",
-            "key_fields": ("parent_sys_id", "name"),
-            "allow_none_fields": ("parent_sys_id",),
-        },
-        "device": {
-            "name_field": "name",
-            "key_fields": ("name",),
-        },
-    }
 
     company = models.Company
     manufacturer = models.Manufacturer
@@ -239,7 +205,7 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
         Returns:
             Records with name fields updated for duplicate groups.
         """
-        rule = self._duplicate_name_rules.get(model_name)
+        rule = SERVICENOW_DUPLICATE_NAME_RULES.get(model_name)
         if not rule:
             return records
         groups = self._group_duplicate_records(records, rule)
@@ -374,8 +340,6 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
         self.apply_defaults(attributes, defaults)
         attributes["sys_id"] = record.get("sys_id")
         attributes["servicenow_sys_id"] = record.get("sys_id")
-        attributes["servicenow_table"] = table
-        attributes["servicenow_instance"] = self.client.integration.remote_url
         attributes["servicenow_url"] = build_servicenow_url(
             instance=self.client.integration.remote_url,
             table=table,

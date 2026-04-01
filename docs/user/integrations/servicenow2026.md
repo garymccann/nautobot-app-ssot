@@ -16,5 +16,5 @@ Defaults for missing ServiceNow fields (such as Location status or Device role) 
 
 ## Object Metadata
 
-ServiceNow identity fields (sys_id, URL, table, instance) are stored as Object Metadata on Nautobot
+ServiceNow identity fields (sys_id and URL) are stored as Object Metadata on Nautobot
 objects. This metadata is used for matching and for rendering an "Open in ServiceNow" button.

@@ -38,7 +38,7 @@ class NautobotAdapter(Adapter, BaseNautobotAdapter):
     """
 
     def __init__(self, *args, job, sync=None, **kwargs):
-        """Instantiate this class, but do not load data immediately from the local system."""
+        """Instantiate this class but do not load data immediately from the local system."""
         super().__init__(*args, **kwargs)
         self.job = job
         self.sync = sync
@@ -212,8 +212,8 @@ class NautobotAdapter(Adapter, BaseNautobotAdapter):
     def _handle_to_many_relationship(self, database_object, diffsync_model, parameter_name):
         """Handle a single one- or many-to-many relationship field.
 
-        one- or many-to-many relationships are type annotated as a list of typed dictionaries. The typed
-        dictionary type expresses, which attributes we are interested in for diffsync.
+        One- or many-to-many relationships are type annotated as a list of typed dictionaries. The typed
+        dictionary type expresses which attributes we are interested in for diffsync.
 
         :param database_object: The Django ORM database object
         :param diffsync_model: The diffsync model class (not specific object) for this ORM object
@@ -223,9 +223,9 @@ class NautobotAdapter(Adapter, BaseNautobotAdapter):
         :example:
 
         Example parameters:
-        - a `nautobot.dcim.models.Interface` instance with two IP addresses assigned
+        - A `nautobot.dcim.models.Interface` instance with two IP addresses assigned
           through the `ip_addresses` many-to-many relationship as `database_object`
-        - an InterfaceModel class like the following `NautobotInterface` as `diffsync_model`
+        - An InterfaceModel class like the following `NautobotInterface` as `diffsync_model`
 
         ```python
         class IPAddressDict(TypedDict):
@@ -233,10 +233,10 @@ class NautobotAdapter(Adapter, BaseNautobotAdapter):
             mask_length: int
 
 
-        class NautobotInterface(NautobotModel):
+        Class NautobotInterface(NautobotModel):
             _model = Interface
             _modelname = "interface"
-            _identifiers = (
+            _identifiers =(
                 "name",
                 "device__name",
             )
@@ -247,7 +247,7 @@ class NautobotAdapter(Adapter, BaseNautobotAdapter):
             ip_addresses: List[IPAddressDict] = []
         ```
 
-        - a field name like `ip_addresses` as the `parameter_name`
+        - A field name like `ip_addresses` as the `parameter_name`
 
         Example return list within the above input example:
 
@@ -295,7 +295,7 @@ class NautobotAdapter(Adapter, BaseNautobotAdapter):
                 relationship_associations.first(),
                 "source" if annotation.side == RelationshipSideEnum.DESTINATION else "destination",
             ),
-            # Discard the first part of the paramater name as it references the initial related object
+            # Discard the first part of the parameter name as it references the initial related object
             re.sub("^(.*?)__", "", parameter_name),
         )
 
@@ -335,5 +335,5 @@ class NautobotAdapter(Adapter, BaseNautobotAdapter):
             )
             self.metadata_scope_fields[diffsync_model] = obj_metadata_scope_fields
 
-        # Define the metadata type on the adapter so that can be used on the models crud operations
+        # Define the metadata type on the adapter so that can be used on the model crud operations
         self.metadata_type = metadata_type

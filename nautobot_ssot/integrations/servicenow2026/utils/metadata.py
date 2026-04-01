@@ -44,7 +44,7 @@ def get_object_metadata_value(obj, metadata_type_name: str) -> Optional[str]:
     return metadata.value
 
 
-def get_object_by_sys_id(model, sys_id: Optional[str]):
+def get_object_by_sys_id(model, sys_id: str):
     """Return a Nautobot object by ServiceNow sys_id metadata value.
 
     Args:
@@ -100,10 +100,4 @@ def get_servicenow_url(obj) -> Optional[str]:
     Returns:
         ServiceNow URL if available, otherwise None.
     """
-    url_value = get_object_metadata_value(obj, constants.SERVICENOW_METADATA_URL)
-    if url_value:
-        return url_value
-    sys_id = get_object_metadata_value(obj, constants.SERVICENOW_METADATA_SYS_ID)
-    table = get_object_metadata_value(obj, constants.SERVICENOW_METADATA_TABLE)
-    instance = get_object_metadata_value(obj, constants.SERVICENOW_METADATA_INSTANCE)
-    return build_servicenow_url(instance=instance, table=table, sys_id=sys_id)
+    return get_object_metadata_value(obj, constants.SERVICENOW_METADATA_URL)

@@ -49,7 +49,7 @@ class TheNautobotAdapter(NautobotAdapter):
             diffsync_model: DiffSync model class to load.
         """
         parameter_names = diffsync_model.get_synced_attributes()
-        for database_object in diffsync_model._get_queryset():  # pylint: disable=protected-access
+        for database_object in diffsync_model._get_queryset():
             if not self.include_without_sys_id and not self._has_sys_id_metadata(database_object):
                 continue
             self._load_single_object(database_object, diffsync_model, parameter_names)

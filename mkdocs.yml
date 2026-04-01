@@ -192,6 +192,7 @@ nav:
       - Upgrading from SSoT 2.x to 3.x: "dev/upgrade.md"
       - Extending the App: "dev/extending.md"
       - Developing Jobs: "dev/jobs.md"
+      - ServiceNow 2026 Design: "dev/servicenow2026_design.md"
       - Debugging Jobs: "dev/debugging.md"
       - Contributing to the App: "dev/contributing.md"
       - Development Environment: "dev/dev_environment.md"

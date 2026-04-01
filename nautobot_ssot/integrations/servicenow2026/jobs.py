@@ -1,7 +1,7 @@
 """Jobs for ServiceNow 2026 integration."""
 
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any
 
 from diffsync.enum import DiffSyncFlags
 from django.templatetags.static import static
@@ -11,19 +11,14 @@ from nautobot.extras.models import ExternalIntegration
 from nautobot_ssot.integrations.servicenow2026.client import (
     ServiceNowBackendBase,
     ServiceNowClient,
-    ServiceNowClientError,
 )
 from nautobot_ssot.integrations.servicenow2026.diffsync.adapters.nautobot import TheNautobotAdapter
 from nautobot_ssot.integrations.servicenow2026.diffsync.adapters.servicenow import ServiceNowAdapter
 from nautobot_ssot.integrations.servicenow2026.mapping import load_mapping
+from nautobot_ssot.integrations.servicenow2026.utils.helpers import parse_csv
 from nautobot_ssot.jobs.base import DataMapping, DataSource, DataTarget
 
 name = "ServiceNow 2026 SSoT"  # pylint: disable=invalid-name
-
-
-def list_mapping_profiles():
-    """Working on it."""
-    pass
 
 
 class _ServiceNow2BaseJob(Job):
@@ -40,7 +35,7 @@ class _ServiceNow2BaseJob(Job):
 
     servicenow_instance = ObjectVar(
         model=ExternalIntegration,
-        queryset=ExternalIntegration.objects.all(),
+        queryset=ExternalIntegration.objects.filter(name="ServiceNow"),
         display_field="display",
         label="ServiceNow Instance",
         required=True,
@@ -75,14 +70,7 @@ class _ServiceNow2BaseJob(Job):
         Returns:
             ServiceNowClient instance.
         """
-        try:
-            return ServiceNowClient(integration=integration, backend=backend)
-        except (ServiceNowClientError, ServiceNowClientError) as error:
-            raise JobConfigError(str(error)) from error
-
-
-class JobConfigError(Exception):
-    """Custom exception for invalid job configuration."""
+        return ServiceNowClient(integration=integration, backend=backend)
 
 
 # class ServiceNowSyncLogMixin:
@@ -122,20 +110,6 @@ class JobConfigError(Exception):
 #             if args[3] is not None:
 #                 args[3] = self._serialize_log_value(args[3])
 #         super().sync_log(*args, **kwargs)
-
-
-def _parse_csv(value: Optional[str]) -> List[str]:
-    """Return a list of values from a comma-delimited string.
-
-    Args:
-        value: Comma-delimited string.
-
-    Returns:
-        List of stripped values.
-    """
-    if not value:
-        return []
-    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 class ServiceNowToNautobot(_ServiceNow2BaseJob, DataSource):  # pylint: disable=too-many-instance-attributes
@@ -212,7 +186,7 @@ class ServiceNowToNautobot(_ServiceNow2BaseJob, DataSource):  # pylint: disable=
             job=self,
             mapping_path=mapping_path,
             filter_mode=self.filter_mode,
-            location_types=_parse_csv(self.location_types),
+            location_types=parse_csv(self.location_types),
             include_unknown_type=self.include_unknown_type,
             root_location_sys_id=self.root_location_sys_id or None,
         )
