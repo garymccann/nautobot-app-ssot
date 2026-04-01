@@ -239,10 +239,14 @@ class NautobotToServiceNow(_ServiceNow2BaseJob, DataTarget):  # pylint: disable=
     class Meta:  # pylint: disable=too-few-public-methods
         """Metadata about this Job."""
 
-        name = "Nautobot_to_ServiceNow"
+        name = "Nautobot ⟹ ServiceNow"
         data_target = "ServiceNow"
         data_target_icon = static("nautobot_ssot_servicenow/ServiceNow_logo.svg")
         description = "Synchronize data from Nautobot into ServiceNow."
+        has_sensitive_variables = False
+        is_singleton = True
+        soft_time_limit = 21600  # 6 hours
+        time_limit = 86400  # 24 hours
 
     @classmethod
     def data_mappings(cls):
@@ -257,24 +261,26 @@ class NautobotToServiceNow(_ServiceNow2BaseJob, DataTarget):  # pylint: disable=
 
     def load_source_adapter(self):
         """Load Nautobot adapter."""
-        self.source_adapter = TheNautobotAdapter(job=self, sync=self.sync)
+        self.source_adapter = TheNautobotAdapter(job=self, sync=self.sync, include_without_sys_id=True)
         self.source_adapter.load()
 
     def load_target_adapter(self):
         """Load ServiceNow adapter."""
         mapping_path = Path(self.mapping_path) if self.mapping_path else None
-        if mapping_path:
-            load_mapping(mapping_path)
+        mapping = load_mapping(mapping_path)
+        self.mapping_defaults = {name: entry.get("defaults", {}) for name, entry in mapping.items()}
         client = self._build_client(self.integration, self.backend)
-        self.target_adapter = ServiceNowAdapter(client=client, job=self, mapping_path=mapping_path)
+        self.target_adapter = ServiceNowAdapter(
+            client=client,
+            job=self,
+            mapping_path=mapping_path
+        )
         self.target_adapter.load()
 
     def run(  # pylint: disable=arguments-differ
         self,
         dryrun,
         memory_profiling,
-        integration,
-        backend,
         *args,
         **kwargs,
     ):
@@ -283,12 +289,11 @@ class NautobotToServiceNow(_ServiceNow2BaseJob, DataTarget):  # pylint: disable=
         Args:
             dryrun: Whether to run in dry-run mode.
             memory_profiling: Whether to collect memory profiling data.
-            delete_records: Whether to delete unmatched ServiceNow records.
         """
         self.dryrun = dryrun
         self.memory_profiling = memory_profiling
-        self.integration = integration
-        self.backend = backend
+        self.integration = kwargs.get("servicenow_instance", ExternalIntegration)
+        self.backend = kwargs.get("backend_choice")
         self.mapping_path = kwargs.get("mapping_path")
         self.delete_records = kwargs.get("delete_records")
         self.debug = kwargs.get("debug")

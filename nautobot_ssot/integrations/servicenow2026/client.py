@@ -6,7 +6,7 @@ import requests
 from nautobot.extras.choices import SecretsGroupAccessTypeChoices, SecretsGroupSecretTypeChoices
 from nautobot.extras.models import ExternalIntegration, SecretsGroupAssociation
 
-from nautobot_ssot.integrations.servicenow2026.constants import DEFAULT_CLIENT_PAGE_SIZE
+from nautobot_ssot.integrations.servicenow2026.constants import DEFAULT_CLIENT_PAGE_SIZE, DEFAULT_CLIENT_TIMEOUT
 
 
 class ServiceNowClientError(Exception):
@@ -96,6 +96,67 @@ class ServiceNowBackendBase:
         """
         raise NotImplementedError("Backend must implement iter_table().")
 
+    def _request_headers(self) -> Dict[str, str]:
+        """Build default headers for ServiceNow REST requests."""
+        return {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+    def _request_kwargs(self) -> Dict[str, Any]:
+        """Build kwargs for requests calls."""
+        kwargs: Dict[str, Any] = {
+            "headers": self._request_headers(),
+            "verify": self.integration.verify_ssl,
+            "timeout": DEFAULT_CLIENT_TIMEOUT,
+        }
+        if not self.token and self.username and self.password:
+            kwargs["auth"] = (self.username, self.password)
+        return kwargs
+
+    def _table_url(self, table: str, sys_id: Optional[str] = None) -> str:
+        """Build a ServiceNow Table API URL for the current instance."""
+        base_url = (self.integration.remote_url or "").strip().rstrip("/")
+        if not base_url.startswith(("http://", "https://")):
+            base_url = f"https://{base_url}"
+        url = f"{base_url}/api/now/table/{table}"
+        if sys_id:
+            return f"{url}/{sys_id}"
+        return url
+
+    def _request_result(self, method: str, url: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Send a ServiceNow REST request and return the result dictionary."""
+        kwargs = self._request_kwargs()
+        if payload is not None:
+            kwargs["json"] = payload
+        response = requests.request(method, url, **kwargs)
+        if response.status_code >= 400:
+            raise ServiceNowClientError(
+                f"ServiceNow request failed ({response.status_code}) for {method} {url}: {response.text}"
+            )
+        if response.status_code == 204:
+            return {}
+        try:
+            body = response.json()
+        except ValueError:
+            return {}
+        result = body.get("result")
+        if isinstance(result, dict):
+            return result
+        return body if isinstance(body, dict) else {}
+
+    def create_record(self, table: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a ServiceNow table record."""
+        return self._request_result("POST", self._table_url(table), payload=payload)
+
+    def update_record(self, table: str, sys_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Update a ServiceNow table record by sys_id."""
+        return self._request_result("PATCH", self._table_url(table, sys_id=sys_id), payload=payload)
+
+    def delete_record(self, table: str, sys_id: str) -> None:
+        """Delete a ServiceNow table record by sys_id."""
+        self._request_result("DELETE", self._table_url(table, sys_id=sys_id))
+
 
 class PySnowBackend(ServiceNowBackendBase):
     """PySnow-backed ServiceNow client."""
@@ -146,6 +207,13 @@ class PySnowBackend(ServiceNowBackendBase):
         resource = self.client.resource(api_path=f"/table/{table}")
         for record in resource.get(query=query, stream=True).all():
             yield self._coerce_record(record)
+
+    def _request_headers(self) -> Dict[str, str]:
+        """Build headers for PySnow-compatible token auth."""
+        headers = super()._request_headers()
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        return headers
 
 
 class PySNCBackend(ServiceNowBackendBase):
@@ -259,6 +327,13 @@ class PySNCBackend(ServiceNowBackendBase):
                 return
             offset += self.page_size
 
+    def _request_headers(self) -> Dict[str, str]:
+        """Build headers for PySNC-compatible token auth."""
+        headers = super()._request_headers()
+        if self.token:
+            headers["x-sn-apikey"] = self.token
+        return headers
+
 
 class ServiceNowClient:
     """ServiceNow client wrapper with backend selection."""
@@ -301,3 +376,15 @@ class ServiceNowClient:
             Iterator of ServiceNow record dictionaries.
         """
         return self.backend.iter_table(table=table, query=query)
+
+    def create_record(self, table: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a ServiceNow table record via the configured backend."""
+        return self.backend.create_record(table=table, payload=payload)
+
+    def update_record(self, table: str, sys_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Update a ServiceNow table record via the configured backend."""
+        return self.backend.update_record(table=table, sys_id=sys_id, payload=payload)
+
+    def delete_record(self, table: str, sys_id: str) -> None:
+        """Delete a ServiceNow table record via the configured backend."""
+        self.backend.delete_record(table=table, sys_id=sys_id)

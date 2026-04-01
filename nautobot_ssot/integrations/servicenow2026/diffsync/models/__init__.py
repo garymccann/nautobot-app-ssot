@@ -2,9 +2,12 @@
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Annotated, Optional
+from typing import Any, Annotated, Optional
+from uuid import UUID
 
+from diffsync import DiffSyncModel
 from diffsync.exceptions import ObjectCrudException
+from diffsync.exceptions import ObjectNotCreated, ObjectNotDeleted, ObjectNotUpdated
 from django.contrib.contenttypes.models import ContentType
 from nautobot.dcim.models import (
     Device as NautobotDevice,
@@ -25,6 +28,7 @@ from nautobot.dcim.models import (
     Platform as NautobotPlatform,
 )
 from nautobot.extras.models import Role, Status
+from nautobot.extras.models.metadata import MetadataType, ObjectMetadata
 from nautobot.tenancy.models import Tenant as NautobotTenant
 
 from nautobot_ssot.contrib import NautobotModel
@@ -73,6 +77,170 @@ class ServiceNowBaseModel(ObjectMetadataMixin, NautobotModel):
     sys_id: Optional[str] = None
     servicenow_sys_id: Annotated[str, ObjectMetadataAnnotation(key=constants.SERVICENOW_METADATA_SYS_ID)]
     servicenow_url: Annotated[Optional[str], ObjectMetadataAnnotation(key=constants.SERVICENOW_METADATA_URL)] = None
+
+    @staticmethod
+    def _is_servicenow_adapter(adapter) -> bool:
+        """Return True when operating against the ServiceNow target adapter."""
+        return hasattr(adapter, "client") and hasattr(adapter, "mapping")
+
+    @classmethod
+    def _get_mapping_entry(cls, adapter) -> dict[str, Any]:
+        """Return mapping entry for this model type from the ServiceNow adapter."""
+        mapping = getattr(adapter, "mapping", {}) or {}
+        entry = mapping.get(cls.get_type())
+        if not entry or "table" not in entry:
+            raise ObjectCrudException(f"Mapping for model '{cls.get_type()}' is not defined.")
+        return entry
+
+    @classmethod
+    def _to_payload_value(cls, value: Any) -> Any:
+        """Convert values into JSON-safe payload values for ServiceNow."""
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, dict):
+            return {key: cls._to_payload_value(val) for key, val in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [cls._to_payload_value(item) for item in value]
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        return str(value)
+
+    @classmethod
+    def _map_to_servicenow_payload(cls, data: dict[str, Any], mapping_entry: dict[str, Any]) -> dict[str, Any]:
+        """Map DiffSync field data to a ServiceNow table payload using mapping.yaml."""
+        payload: dict[str, Any] = {}
+        for mapping in mapping_entry.get("mappings", []):
+            field = mapping.get("field")
+            if not field or field not in data:
+                continue
+            value = cls._to_payload_value(data[field])
+            if "column" in mapping:
+                payload[mapping["column"]] = value
+                continue
+            if "reference" in mapping:
+                key = mapping["reference"].get("key")
+                if key:
+                    payload[key] = value
+        return payload
+
+    @classmethod
+    def _extract_nautobot_pk_from_identifier(cls, identifiers: dict[str, Any]) -> Optional[UUID]:
+        """Extract Nautobot object PK from synthetic outbound identifier, if present."""
+        value = identifiers.get("servicenow_sys_id")
+        if not isinstance(value, str) or not value.startswith("nautobot-"):
+            return None
+        try:
+            return UUID(value.replace("nautobot-", "", 1))
+        except ValueError:
+            return None
+
+    @classmethod
+    def _upsert_metadata_value(cls, obj, metadata_name: str, value: str) -> None:
+        """Create or update one ObjectMetadata value on a Nautobot object."""
+        metadata_type = MetadataType.objects.filter(name=metadata_name).first()
+        if not metadata_type:
+            return
+        content_type = ContentType.objects.get_for_model(type(obj))
+        if content_type not in metadata_type.content_types.all():
+            metadata_type.content_types.add(content_type)
+        metadata, created = ObjectMetadata.objects.get_or_create(
+            assigned_object_id=obj.id,
+            assigned_object_type=content_type,
+            metadata_type=metadata_type,
+            defaults={"value": value, "scoped_fields": []},
+        )
+        if not created and metadata.value != value:
+            metadata.value = value
+            metadata.validated_save()
+
+    @classmethod
+    def _persist_created_servicenow_metadata(
+        cls,
+        adapter,
+        identifiers: dict[str, Any],
+        table: str,
+        created_sys_id: str,
+    ) -> Optional[str]:
+        """Persist created ServiceNow identifiers back into Nautobot ObjectMetadata."""
+        nautobot_pk = cls._extract_nautobot_pk_from_identifier(identifiers)
+        if nautobot_pk is None:
+            return None
+        obj = cls._model.objects.filter(pk=nautobot_pk).first()
+        if not obj:
+            return None
+        cls._upsert_metadata_value(obj, constants.SERVICENOW_METADATA_SYS_ID, created_sys_id)
+        created_url = metadata_utils.build_servicenow_url(
+            instance=getattr(adapter.client.integration, "remote_url", None),
+            table=table,
+            sys_id=created_sys_id,
+        )
+        if created_url:
+            cls._upsert_metadata_value(obj, constants.SERVICENOW_METADATA_URL, created_url)
+        return created_url
+
+    @classmethod
+    def create(cls, adapter, ids, attrs):
+        """Create object in ServiceNow when running Nautobot->ServiceNow sync."""
+        if not cls._is_servicenow_adapter(adapter):
+            return super().create(adapter, ids, attrs)
+        try:
+            mapping_entry = cls._get_mapping_entry(adapter)
+            payload = cls._map_to_servicenow_payload({**ids, **attrs}, mapping_entry)
+            created_record = adapter.client.create_record(mapping_entry["table"], payload)
+            created_sys_id = created_record.get("sys_id")
+            if not created_sys_id:
+                raise ObjectCrudException(f"ServiceNow create response did not include sys_id: {created_record}")
+            created_url = cls._persist_created_servicenow_metadata(
+                adapter=adapter,
+                identifiers=ids,
+                table=mapping_entry["table"],
+                created_sys_id=created_sys_id,
+            )
+        except Exception as error:  # pylint: disable=broad-except
+            raise ObjectNotCreated(
+                f"Failed to create ServiceNow {cls.get_type()} with identifiers {ids} and attributes {attrs}: {error}"
+            ) from error
+        model = DiffSyncModel.create.__func__(cls, adapter, ids, attrs)
+        model.servicenow_sys_id = created_sys_id
+        if created_url:
+            model.servicenow_url = created_url
+        return model
+
+    def update(self, attrs):
+        """Update object in ServiceNow when running Nautobot->ServiceNow sync."""
+        if not self._is_servicenow_adapter(self.adapter):
+            return super().update(attrs)
+        if not self.servicenow_sys_id:
+            raise ObjectNotUpdated(
+                f"Cannot update ServiceNow {self.get_type()} without a servicenow_sys_id identifier."
+            )
+        try:
+            mapping_entry = self._get_mapping_entry(self.adapter)
+            payload = self._map_to_servicenow_payload(attrs, mapping_entry)
+            if payload:
+                self.adapter.client.update_record(mapping_entry["table"], self.servicenow_sys_id, payload)
+        except Exception as error:  # pylint: disable=broad-except
+            raise ObjectNotUpdated(
+                f"Failed to update ServiceNow {self.get_type()} {self.servicenow_sys_id} with attrs {attrs}: {error}"
+            ) from error
+        return DiffSyncModel.update(self, attrs)
+
+    def delete(self):
+        """Delete object in ServiceNow when running Nautobot->ServiceNow sync."""
+        if not self._is_servicenow_adapter(self.adapter):
+            return super().delete()
+        if not self.servicenow_sys_id:
+            raise ObjectNotDeleted(
+                f"Cannot delete ServiceNow {self.get_type()} without a servicenow_sys_id identifier."
+            )
+        try:
+            mapping_entry = self._get_mapping_entry(self.adapter)
+            self.adapter.client.delete_record(mapping_entry["table"], self.servicenow_sys_id)
+        except Exception as error:  # pylint: disable=broad-except
+            raise ObjectNotDeleted(
+                f"Failed to delete ServiceNow {self.get_type()} {self.servicenow_sys_id}: {error}"
+            ) from error
+        return DiffSyncModel.delete(self)
 
 
 def _resolve_metadata_foreign_key(model, sys_id: Optional[str], adapter, label: str):

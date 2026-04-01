@@ -89,32 +89,38 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
         table = entry.get("table")
         if not table:
             return
-        records = self._collect_records(model_name, entry, table)
-        self._add_records(model_name, records)
-        self._update_loaded_sys_ids(model_name, records)
-        if self.job:
-            self.job.logger.info("Loaded %s %s records from ServiceNow.", len(records), model_name)
 
-    def _collect_records(self, model_name: str, entry: Dict[str, Any], table: str) -> List[Dict[str, Any]]:
-        """Collect and normalize records for a ServiceNow table.
-
-        Args:
-            model_name: DiffSync model name.
-            entry: Mapping entry for the model.
-            table: ServiceNow table name.
-
-        Returns:
-            List of normalized record dictionaries.
-        """
+        # Ingest pipeline for one mapping entry:
+        # 1) fetch raw rows
+        # 2) map/normalize records
+        # 3) enforce deterministic ordering and duplicate-name handling
+        # 4) null references to unresolved related sys_ids
+        # 5) add DiffSync objects and track loaded sys_ids for downstream FK checks
         mappings = entry.get("mappings", [])
         table_query = entry.get("table_query", {})
-        raw_records = list(self._iter_records(table, table_query))
+        raw_records = list(self.client.iter_table(table=table, query=table_query))
         self._log_fixture_dump(model_name, table, raw_records)
+
         records = [self._build_attributes(record, mappings, table, model_name) for record in raw_records]
         records = [record for record in records if record.get("sys_id")]
         records = self._order_records(model_name, records)
         records = self._apply_duplicate_name_suffixes(model_name, records)
-        return self.null_unresolved_references(model_name, records)
+        records = self.null_unresolved_references(model_name, records)
+
+        model_class = getattr(self, model_name)
+        for record in records:
+            model = model_class(**record)
+            try:
+                self.add(model)
+            except ObjectAlreadyExists:
+                if self.job:
+                    self.job.logger.warning("Duplicate %s with sys_id %s skipped.", model_name, record.get("sys_id"))
+
+        self.loaded_sys_ids[model_name] = {
+            record.get("servicenow_sys_id") or record.get("sys_id") for record in records if record.get("sys_id")
+        }
+        if self.job:
+            self.job.logger.info("Loaded %s %s records from ServiceNow.", len(records), model_name)
 
     def _order_records(self, model_name: str, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Order records deterministically, handling location hierarchy.
@@ -131,38 +137,13 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
             return self._order_locations(records)
         return sorted(records, key=lambda item: item.get("sys_id") or "")
 
-    def _add_records(self, model_name: str, records: List[Dict[str, Any]]) -> None:
-        """Add records to the adapter.
-
-        Args:
-            model_name: DiffSync model name.
-            records: Record dictionaries to add.
-        """
-        model_class = getattr(self, model_name)
-        for record in records:
-            model = model_class(**record)
-            try:
-                self.add(model)
-            except ObjectAlreadyExists:
-                if self.job:
-                    self.job.logger.warning("Duplicate %s with sys_id %s skipped.", model_name, record.get("sys_id"))
-
     def _log_fixture_dump(self, model_name: str, table: str, records: List[Dict[str, Any]]) -> None:
         """Log raw ServiceNow records for fixture capture."""
+        if not self.dump_fixtures:
+            return
         logger = self.job.logger if self.job else logging.getLogger(__name__)
         payload = json.dumps(records, ensure_ascii=True, default=str, sort_keys=True, indent=2)
         logger.info("ServiceNow fixture dump for %s (%s):\n%s", model_name, table, payload)
-
-    def _update_loaded_sys_ids(self, model_name: str, records: List[Dict[str, Any]]) -> None:
-        """Track sys_ids loaded for reference validation.
-
-        Args:
-            model_name: DiffSync model name.
-            records: Record dictionaries used for tracking.
-        """
-        self.loaded_sys_ids[model_name] = {
-            record.get("servicenow_sys_id") or record.get("sys_id") for record in records if record.get("sys_id")
-        }
 
     def null_unresolved_references(self, model_name: str, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Clear reference sys_ids that don't exist in loaded datasets."""
@@ -208,22 +189,6 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
         rule = SERVICENOW_DUPLICATE_NAME_RULES.get(model_name)
         if not rule:
             return records
-        groups = self._group_duplicate_records(records, rule)
-        self._apply_suffixes_to_groups(groups, rule["name_field"])
-        return records
-
-    def _group_duplicate_records(
-        self, records: List[Dict[str, Any]], rule: Dict[str, Any]
-    ) -> Dict[tuple, List[Dict[str, Any]]]:
-        """Group records by duplicate key rules.
-
-        Args:
-            records: List of record attribute dictionaries.
-            rule: Duplicate rule configuration.
-
-        Returns:
-            Dictionary mapping duplicate keys to record lists.
-        """
         name_field = rule["name_field"]
         key_fields = rule["key_fields"]
         allow_none_fields = set(rule.get("allow_none_fields", ()))
@@ -233,7 +198,12 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
             if key is None:
                 continue
             groups[key].append(record)
-        return groups
+        for group in groups.values():
+            if len(group) <= 1:
+                continue
+            for record in group:
+                self._apply_suffix_to_record(record, name_field)
+        return records
 
     @staticmethod
     def _build_duplicate_key(
@@ -264,19 +234,6 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
             key_values.append(value)
         return tuple(key_values)
 
-    def _apply_suffixes_to_groups(self, groups: Dict[tuple, List[Dict[str, Any]]], name_field: str) -> None:
-        """Apply name suffixes for duplicate groups.
-
-        Args:
-            groups: Grouped record dictionary.
-            name_field: Field containing the display name.
-        """
-        for group in groups.values():
-            if len(group) <= 1:
-                continue
-            for record in group:
-                self._apply_suffix_to_record(record, name_field)
-
     def _apply_suffix_to_record(self, record: Dict[str, Any], name_field: str) -> None:
         """Apply sys_id suffix to a single record name if needed.
 
@@ -304,18 +261,6 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
         if len(suffix) == 8 and all(char in "0123456789abcdefABCDEF" for char in suffix):
             return prefix
         return name
-
-    def _iter_records(self, table: str, query: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
-        """Iterate over ServiceNow records for a table.
-
-        Args:
-            table: ServiceNow table name.
-            query: Query dictionary.
-
-        Returns:
-            Iterable of ServiceNow records.
-        """
-        yield from self.client.iter_table(table=table, query=query)
 
     def _build_attributes(
         self,

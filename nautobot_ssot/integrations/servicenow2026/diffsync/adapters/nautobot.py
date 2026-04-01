@@ -84,7 +84,16 @@ class TheNautobotAdapter(NautobotAdapter):
         metadata_for_this_field = getattr(type_hints[parameter_name], "__metadata__", [])
         for metadata in metadata_for_this_field:
             if isinstance(metadata, ObjectMetadataAnnotation):
-                parameters[parameter_name] = self._load_object_metadata_value(database_object, metadata)
+                metadata_value = self._load_object_metadata_value(database_object, metadata)
+                # For outbound "include_without_sys_id" mode, synthesize a stable identifier so
+                # DiffSync can emit add diffs for Nautobot-only objects lacking ServiceNow metadata.
+                if (
+                    metadata_value is None
+                    and self.include_without_sys_id
+                    and parameter_name == "servicenow_sys_id"
+                ):
+                    metadata_value = f"nautobot-{database_object.pk}"
+                parameters[parameter_name] = metadata_value
                 return
         super()._handle_single_parameter(parameters, parameter_name, database_object, diffsync_model)
 
