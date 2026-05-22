@@ -8,7 +8,7 @@ from nautobot.apps.testing import TestCase
 from nautobot.dcim.models import Location, LocationType
 from nautobot.extras.choices import CustomFieldTypeChoices
 from nautobot.extras.models import CustomField, Relationship, RelationshipAssociation, Role, Status, Tag
-from nautobot.ipam.models import VLAN, IPAddress, Namespace, Prefix, VLANGroup, VRF
+from nautobot.ipam.models import VLAN, IPAddress, Namespace, Prefix, VLANGroup
 from nautobot.tenancy.models import Tenant
 
 from nautobot_ssot.integrations.infoblox.choices import (
