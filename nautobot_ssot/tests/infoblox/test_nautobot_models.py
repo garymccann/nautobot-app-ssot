@@ -1096,3 +1096,131 @@ class TestModelNautobotIPAddress(TestCase):
         self.assertEqual("", ipaddress.custom_field_data.get("dns_a_record_comment"))
         self.assertEqual("", ipaddress.custom_field_data.get("dns_ptr_record_comment"))
         self.assertEqual("dhcp", ipaddress.type)
+
+
+class TestModelNautobotVlanGroupNamespaceVlan(TestCase):
+    """Tests VLANGroup, Namespace and VLAN model update/delete behaviors."""
+
+    def setUp(self):
+        """Test class set up."""
+        create_prefix_relationship()
+        self.config = create_default_infoblox_config()
+        self.config.infoblox_sync_filters = [{"network_view": "default"}, {"network_view": "dev"}]
+        self.config.infoblox_network_view_to_namespace_map = {"default": "Global", "dev": "dev"}
+
+        self.status_active, _ = Status.objects.get_or_create(name="Active")
+        self.status_deprecated, _ = Status.objects.get_or_create(name="Deprecated")
+        self.status_reserved, _ = Status.objects.get_or_create(name="Reserved")
+        for status in [self.status_active, self.status_deprecated, self.status_reserved]:
+            status.content_types.add(ContentType.objects.get_for_model(VLAN))
+
+        self.location_type, _ = LocationType.objects.get_or_create(name="Test LocationType 2")
+        self.location_type.content_types.add(ContentType.objects.get_for_model(VLAN))
+        self.location_type.content_types.add(ContentType.objects.get_for_model(VLANGroup))
+        self.location, _ = Location.objects.get_or_create(
+            name="Test Location 2", location_type=self.location_type, status=self.status_active
+        )
+
+        Namespace.objects.get_or_create(name="Global")
+        Namespace.objects.get_or_create(name="dev")
+        self.infoblox_adapter = InfobloxAdapter(conn=Mock(), config=self.config)
+
+    def _add_source_namespaces(self, include_dev=True):
+        """Add source namespaces used in most sync scenarios."""
+        self.infoblox_adapter.add(self.infoblox_adapter.namespace(name="Global", ext_attrs={}))
+        if include_dev:
+            self.infoblox_adapter.add(self.infoblox_adapter.namespace(name="dev", ext_attrs={}))
+
+    def test_vlangroup_update_ext_attrs(self):
+        """Validate VLANGroup update applies ext attrs via sync."""
+        self._add_source_namespaces(include_dev=True)
+        VLANGroup.objects.get_or_create(name="VG-Update")
+
+        ds_vlangroup = self.infoblox_adapter.vlangroup(
+            name="VG-Update", description="", ext_attrs={"department": "Network"}
+        )
+        self.infoblox_adapter.add(ds_vlangroup)
+
+        nb_adapter = NautobotAdapter(config=self.config)
+        nb_adapter.job = Mock(debug=True)
+        nb_adapter.load()
+        self.infoblox_adapter.sync_to(nb_adapter)
+
+        self.assertTrue(VLANGroup.objects.filter(name="VG-Update").exists())
+        self.assertTrue(CustomField.objects.filter(key="department").exists())
+
+    def test_vlangroup_delete(self):
+        """Validate VLANGroup object is deleted when absent from source."""
+        self._add_source_namespaces(include_dev=True)
+        VLANGroup.objects.get_or_create(name="VG-To-Delete")
+
+        nb_adapter = NautobotAdapter(config=self.config)
+        nb_adapter.job = Mock(debug=True)
+        nb_adapter.load()
+        self.infoblox_adapter.sync_to(nb_adapter)
+
+        self.assertFalse(VLANGroup.objects.filter(name="VG-To-Delete").exists())
+
+    def test_namespace_update_ext_attrs(self):
+        """Validate Namespace update applies ext attrs via sync."""
+        self._add_source_namespaces(include_dev=False)
+        ds_namespace = self.infoblox_adapter.namespace(name="dev", ext_attrs={"department": "Engineering"})
+        self.infoblox_adapter.add(ds_namespace)
+
+        nb_adapter = NautobotAdapter(config=self.config)
+        nb_adapter.job = Mock(debug=True)
+        nb_adapter.load()
+        self.infoblox_adapter.sync_to(nb_adapter)
+
+        namespace = Namespace.objects.get(name="dev")
+        self.assertEqual("Engineering", namespace.custom_field_data.get("department"))
+
+    def test_namespace_delete_not_allowed(self):
+        """Validate Namespace delete path raises NotImplementedError."""
+        self._add_source_namespaces(include_dev=False)
+
+        nb_adapter = NautobotAdapter(config=self.config)
+        nb_adapter.job = Mock(debug=True)
+        nb_adapter.load()
+
+        with self.assertRaises(NotImplementedError):
+            self.infoblox_adapter.sync_to(nb_adapter)
+
+    def test_vlan_update_status_description_ext_attrs_and_group_location(self):
+        """Validate VLAN update applies mapped status, description, ext attrs and group location."""
+        self._add_source_namespaces(include_dev=True)
+        vg, _ = VLANGroup.objects.get_or_create(name="VG-VLAN-Update")
+        VLAN.objects.get_or_create(
+            vid=200,
+            name="VLAN200",
+            vlan_group=vg,
+            defaults={
+                "status": self.status_deprecated,
+                "description": "Old VLAN description",
+                "location": self.location,
+            },
+        )
+
+        self.infoblox_adapter.add(self.infoblox_adapter.vlangroup(name="VG-VLAN-Update", description="", ext_attrs={}))
+        self.infoblox_adapter.add(
+            self.infoblox_adapter.vlan(
+                vid=200,
+                name="VLAN200",
+                vlangroup="VG-VLAN-Update",
+                status="ASSIGNED",
+                description="Updated VLAN description",
+                ext_attrs={"department": "Operations"},
+            )
+        )
+
+        nb_adapter = NautobotAdapter(config=self.config)
+        nb_adapter.job = Mock(debug=True)
+        nb_adapter.load()
+        self.infoblox_adapter.sync_to(nb_adapter)
+
+        vlan = VLAN.objects.get(vid=200, name="VLAN200", vlan_group__name="VG-VLAN-Update")
+        vg.refresh_from_db()
+        self.assertEqual("Active", vlan.status.name)
+        self.assertEqual("Updated VLAN description", vlan.description)
+        self.assertEqual("Operations", vlan.custom_field_data.get("department"))
+        self.assertEqual(self.location.id, vg.location_id)
