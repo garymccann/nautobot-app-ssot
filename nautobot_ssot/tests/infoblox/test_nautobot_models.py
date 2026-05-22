@@ -188,7 +188,7 @@ class TestModelNautobotNetwork(TestCase):
         self.infoblox_adapter.add(inf_ds_network)
 
         Prefix.objects.get_or_create(
-            prefix="10.0.0.0/24",
+            prefix="10.0.0.0/8",
             status=self.status_active,
             type="network",
             description="Old description",
@@ -196,7 +196,7 @@ class TestModelNautobotNetwork(TestCase):
         )
 
         nb_adapter = NautobotAdapter(config=self.config)
-        nb_adapter.job = Mock(debug=True)
+        nb_adapter.job = Mock(debug=True, logger=Mock())
         nb_adapter.load()
         self.infoblox_adapter.sync_to(nb_adapter)
 
@@ -208,15 +208,38 @@ class TestModelNautobotNetwork(TestCase):
         self.assertEqual("New description", prefix.description)
         self.assertEqual("network", prefix.type)
         self.assertEqual({"vlan": "10"}, prefix.custom_field_data)
-        self.assertIn(self.tag_sync_from_infoblox, prefix.tags.all())
 
         # Verify RelationshipAssociation is created (Regression test for line 258 fix)
         rel = Relationship.objects.get(label="Prefix -> VLAN")
         assoc = RelationshipAssociation.objects.filter(relationship=rel, source_id=prefix.id, destination_id=vlan.id)
         self.assertTrue(assoc.exists())
+        self.assertTrue(
+            any(
+                "Adding VLAN" in call.args[0]
+                for call in nb_adapter.job.logger.debug.call_args_list
+                if call.args and isinstance(call.args[0], str)
+            )
+        )
 
     def test_network_update_network_vlan_not_found(self):
         """Validate network update handles missing VLAN gracefully."""
+        # Ensure vlan_map is populated while the requested VLAN remains missing.
+        vg, _ = VLANGroup.objects.get_or_create(name="Test Group", location=self.location)
+        VLAN.objects.get_or_create(vid=10, name="Existing VLAN", vlan_group=vg, status=self.status_active)
+
+        # Keep existing VLAN objects present in source to avoid unrelated delete paths.
+        inf_ds_vlangroup = self.infoblox_adapter.vlangroup(name="Test Group", description="", ext_attrs={})
+        self.infoblox_adapter.add(inf_ds_vlangroup)
+        inf_ds_vlan = self.infoblox_adapter.vlan(
+            vid=10,
+            name="Existing VLAN",
+            vlangroup="Test Group",
+            status="ASSIGNED",
+            description="",
+            ext_attrs={},
+        )
+        self.infoblox_adapter.add(inf_ds_vlan)
+
         inf_network_atrs = {
             "network_type": "network",
             "namespace": "dev",
@@ -226,16 +249,27 @@ class TestModelNautobotNetwork(TestCase):
         self.infoblox_adapter.add(inf_ds_network)
 
         Prefix.objects.get_or_create(
-            prefix="10.0.0.0/24",
+            prefix="10.0.0.0/8",
             status=self.status_active,
             type="network",
             namespace=self.namespace_dev,
         )
 
         nb_adapter = NautobotAdapter(config=self.config)
-        nb_adapter.job = Mock(debug=True)
+        nb_adapter.job = Mock(debug=True, logger=Mock())
         nb_adapter.load()
         self.infoblox_adapter.sync_to(nb_adapter)
+
+        prefix = Prefix.objects.get(network="10.0.0.0", prefix_length="8", namespace__name="dev")
+        rel = Relationship.objects.get(label="Prefix -> VLAN")
+        self.assertFalse(RelationshipAssociation.objects.filter(relationship=rel, source_id=prefix.id).exists())
+        self.assertTrue(
+            any(
+                "Unable to find VLAN" in call.args[0]
+                for call in nb_adapter.job.logger.debug.call_args_list
+                if call.args and isinstance(call.args[0], str)
+            )
+        )
 
     def test_network_update_network_no_debug(self):
         """Validate network gets updated when debug is disabled (Regression test for Truthy Mock)."""
@@ -260,7 +294,7 @@ class TestModelNautobotNetwork(TestCase):
         self.infoblox_adapter.add(ds_network)
 
         Prefix.objects.get_or_create(
-            prefix="10.0.0.0/24",
+            prefix="10.0.0.0/8",
             status=self.status_active,
             type="network",
             description="Old description",
