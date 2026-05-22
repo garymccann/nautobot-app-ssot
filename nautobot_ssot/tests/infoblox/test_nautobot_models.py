@@ -7,8 +7,9 @@ from django.contrib.contenttypes.models import ContentType
 from nautobot.apps.testing import TestCase
 from nautobot.dcim.models import Location, LocationType
 from nautobot.extras.choices import CustomFieldTypeChoices
-from nautobot.extras.models import CustomField, Relationship, RelationshipAssociation, Status, Tag
-from nautobot.ipam.models import VLAN, IPAddress, Namespace, Prefix, VLANGroup
+from nautobot.extras.models import CustomField, Relationship, RelationshipAssociation, Role, Status, Tag
+from nautobot.ipam.models import VLAN, IPAddress, Namespace, Prefix, VLANGroup, VRF
+from nautobot.tenancy.models import Tenant
 
 from nautobot_ssot.integrations.infoblox.choices import (
     DNSRecordTypeChoices,
@@ -17,6 +18,7 @@ from nautobot_ssot.integrations.infoblox.choices import (
 )
 from nautobot_ssot.integrations.infoblox.diffsync.adapters.infoblox import InfobloxAdapter
 from nautobot_ssot.integrations.infoblox.diffsync.adapters.nautobot import NautobotAdapter
+from nautobot_ssot.integrations.infoblox.diffsync.models.nautobot import process_ext_attrs
 from nautobot_ssot.tests.infoblox.fixtures_infoblox import create_default_infoblox_config, create_prefix_relationship
 
 
@@ -310,6 +312,54 @@ class TestModelNautobotNetwork(TestCase):
         self.assertEqual("No debug update", prefix.description)
         rel = Relationship.objects.get(label="Prefix -> VLAN")
         self.assertTrue(RelationshipAssociation.objects.filter(relationship=rel, source_id=prefix.id).exists())
+
+    def test_network_create_network_with_ranges_and_partial_vlan_map(self):
+        """Validate network create handles ranges and partially missing VLAN mappings."""
+        vg, _ = VLANGroup.objects.get_or_create(name="Create Group", location=self.location)
+        vlan, _ = VLAN.objects.get_or_create(vid=30, name="Create VLAN", vlan_group=vg, status=self.status_active)
+
+        # Keep source VLAN objects to avoid unrelated delete paths in sync.
+        self.infoblox_adapter.add(self.infoblox_adapter.vlangroup(name="Create Group", description="", ext_attrs={}))
+        self.infoblox_adapter.add(
+            self.infoblox_adapter.vlan(
+                vid=30,
+                name="Create VLAN",
+                vlangroup="Create Group",
+                status="ASSIGNED",
+                description="",
+                ext_attrs={},
+            )
+        )
+
+        inf_network_atrs = {
+            "network_type": "network",
+            "namespace": "dev",
+            "ranges": ["10.0.0.10-10.0.0.20"],
+            "vlans": {
+                "30": {"vid": 30, "name": "Create VLAN", "group": "Create Group"},
+                "999": {"vid": 999, "name": "Missing VLAN", "group": "Missing Group"},
+            },
+        }
+        self.infoblox_adapter.add(self.infoblox_adapter.prefix(**_get_network_dict(inf_network_atrs)))
+
+        nb_adapter = NautobotAdapter(config=self.config)
+        nb_adapter.job = Mock(debug=True, logger=Mock())
+        nb_adapter.load()
+        self.infoblox_adapter.sync_to(nb_adapter)
+
+        prefix = Prefix.objects.get(network="10.0.0.0", prefix_length="8", namespace__name="dev")
+        rel = Relationship.objects.get(label="Prefix -> VLAN")
+        assoc = RelationshipAssociation.objects.filter(relationship=rel, source_id=prefix.id, destination_id=vlan.id)
+
+        self.assertEqual("10.0.0.10-10.0.0.20", prefix.custom_field_data.get("dhcp_ranges"))
+        self.assertTrue(assoc.exists())
+        self.assertTrue(
+            any(
+                "Unable to find VLAN 999 Missing VLAN in Missing Group" in call.args[0]
+                for call in nb_adapter.job.logger.warning.call_args_list
+                if call.args and isinstance(call.args[0], str)
+            )
+        )
 
 
 class TestModelNautobotIPAddress(TestCase):
@@ -1224,3 +1274,196 @@ class TestModelNautobotVlanGroupNamespaceVlan(TestCase):
         self.assertEqual("Updated VLAN description", vlan.description)
         self.assertEqual("Operations", vlan.custom_field_data.get("department"))
         self.assertEqual(self.location.id, vg.location_id)
+
+
+class TestModelNautobotBranchMatrix(TestCase):
+    """Additional branch-matrix tests for Infoblox Nautobot model coverage."""
+
+    def setUp(self):
+        """Test class set up."""
+        create_prefix_relationship()
+        self.config = create_default_infoblox_config()
+        self.config.infoblox_sync_filters = [{"network_view": "default"}, {"network_view": "dev"}]
+        self.config.infoblox_network_view_to_namespace_map = {"default": "Global", "dev": "dev"}
+
+        self.namespace_dev, _ = Namespace.objects.get_or_create(name="dev")
+        self.status_active, _ = Status.objects.get_or_create(name="Active")
+        self.infoblox_adapter = InfobloxAdapter(conn=Mock(), config=self.config)
+
+    def _base_prefix(self, prefix="10.99.0.0/24"):
+        """Create a base prefix for IP and ext-attr tests."""
+        pfx = Prefix(
+            prefix=prefix,
+            status=self.status_active,
+            type="network",
+            namespace=self.namespace_dev,
+            description="Branch Matrix Prefix",
+        )
+        pfx.validated_save()
+        return pfx
+
+    def test_process_ext_attrs_success_matrix_for_ip(self):
+        """Validate process_ext_attrs success branches for role/tenant/custom-field mapping."""
+        prefix = self._base_prefix()
+        tenant = Tenant(name="Tenant Matrix")
+        tenant.validated_save()
+        role = Role(name="Matrix IP Role")
+        role.validated_save()
+
+        ip = IPAddress(address="10.99.0.1/24", status=self.status_active, type="host", parent=prefix)
+        ip.validated_save()
+
+        adapter = Mock()
+        adapter.job = Mock(logger=Mock())
+        adapter.tenant_map = {"Tenant Matrix": tenant.id}
+        adapter.role_map = {"Matrix IP Role": role.id}
+        adapter.location_map = {}
+        adapter.vrf_map = {}
+
+        process_ext_attrs(
+            adapter=adapter,
+            obj=ip,
+            extattrs={
+                "role": "Matrix IP Role",
+                "tenant": "Tenant Matrix",
+                "department": "Operations",
+            },
+        )
+
+        self.assertEqual(role.id, ip.role_id)
+        self.assertEqual(tenant.id, ip.tenant_id)
+        self.assertEqual("Operations", ip.custom_field_data.get("department"))
+
+    def test_process_ext_attrs_warning_matrix_for_prefix(self):
+        """Validate process_ext_attrs warning branches for missing maps and unhashable values."""
+        prefix = self._base_prefix(prefix="10.99.1.0/24")
+
+        adapter = Mock()
+        adapter.job = Mock(logger=Mock())
+        adapter.location_map = {}
+        adapter.vrf_map = {}
+        adapter.role_map = {}
+        adapter.tenant_map = {}
+
+        process_ext_attrs(
+            adapter=adapter,
+            obj=prefix,
+            extattrs={
+                "location": "Missing Location",
+                "vrf": ["Missing VRF"],
+                "role": ["Role One", "Role Two"],
+                "tenant": ["Tenant One"],
+            },
+        )
+
+        self.assertGreaterEqual(adapter.job.logger.warning.call_count, 4)
+        self.assertEqual("Missing Location", prefix.custom_field_data.get("location"))
+        self.assertEqual("['Missing VRF']", prefix.custom_field_data.get("vrf"))
+        self.assertEqual("['Role One', 'Role Two']", prefix.custom_field_data.get("role"))
+        self.assertEqual("['Tenant One']", prefix.custom_field_data.get("tenant"))
+
+    def test_dns_host_record_update_paths(self):
+        """Validate Host record update both in configured and non-configured modes."""
+        self.config.dns_record_type = DNSRecordTypeChoices.HOST_RECORD
+        prefix = self._base_prefix(prefix="10.99.2.0/24")
+        IPAddress.objects.create(
+            address="10.99.2.1/24",
+            status=self.status_active,
+            type="host",
+            parent=prefix,
+            dns_name="old-host.example.net",
+            _custom_field_data={"dns_host_record_comment": "Old Host Comment"},
+        )
+
+        nb_adapter = NautobotAdapter(config=self.config)
+        nb_adapter.job = Mock(debug=True, logger=Mock())
+        nb_adapter.load()
+
+        host_record = next(iter(nb_adapter.get_all("dnshostrecord")))
+        host_record.update({"dns_name": "new-host.example.net", "description": "New Host Comment"})
+
+        ip = IPAddress.objects.get(address="10.99.2.1/24", parent__namespace__name="dev")
+        self.assertEqual("new-host.example.net", ip.dns_name)
+        self.assertEqual("New Host Comment", ip.custom_field_data.get("dns_host_record_comment"))
+
+        host_record.adapter.config.dns_record_type = DNSRecordTypeChoices.A_RECORD
+        host_record.update({"dns_name": "ignored.example.net", "description": "Ignored"})
+        self.assertTrue(host_record.adapter.job.logger.warning.called)
+
+    def test_dns_ptr_record_update_paths(self):
+        """Validate PTR record update both in configured and non-configured modes."""
+        self.config.dns_record_type = DNSRecordTypeChoices.A_AND_PTR_RECORD
+        prefix = self._base_prefix(prefix="10.99.3.0/24")
+        IPAddress.objects.create(
+            address="10.99.3.1/24",
+            status=self.status_active,
+            type="host",
+            parent=prefix,
+            dns_name="ptr.example.net",
+            _custom_field_data={"dns_ptr_record_comment": "Old PTR Comment"},
+        )
+
+        nb_adapter = NautobotAdapter(config=self.config)
+        nb_adapter.job = Mock(debug=True, logger=Mock())
+        nb_adapter.load()
+
+        ptr_record = next(iter(nb_adapter.get_all("dnsptrrecord")))
+        ptr_record.update({"description": "New PTR Comment"})
+
+        ip = IPAddress.objects.get(address="10.99.3.1/24", parent__namespace__name="dev")
+        self.assertEqual("New PTR Comment", ip.custom_field_data.get("dns_ptr_record_comment"))
+
+        ptr_record.adapter.config.dns_record_type = DNSRecordTypeChoices.HOST_RECORD
+        ptr_record.update({"description": "Ignored PTR"})
+        self.assertTrue(ptr_record.adapter.job.logger.warning.called)
+
+    def test_ip_address_update_branch_matrix(self):
+        """Validate key IPAddress.update branch paths for fixed-address handling and fallbacks."""
+        prefix = self._base_prefix(prefix="10.99.4.0/24")
+        ip = IPAddress.objects.create(
+            address="10.99.4.1/24",
+            status=self.status_active,
+            type="host",
+            parent=prefix,
+            description="Original Description",
+            _custom_field_data={"fixed_address_comment": "Original Comment"},
+        )
+
+        self.config.fixed_address_type = FixedAddressTypeChoices.RESERVED
+        nb_adapter = NautobotAdapter(config=self.config)
+        nb_adapter.job = Mock(debug=True, logger=Mock())
+        nb_adapter.load()
+
+        ds_ip = next(iter(nb_adapter.get_all("ipaddress")))
+
+        # Covers description=="" branch and fixed_address_comment update path.
+        ds_ip.update({"description": "", "fixed_address_comment": "Cleared Comment"})
+        ip.refresh_from_db()
+        self.assertEqual("", ip.description)
+        self.assertEqual("Cleared Comment", ip.custom_field_data.get("fixed_address_comment"))
+
+        # Covers DONT_CREATE_RECORD guard branch.
+        ds_ip.adapter.config.fixed_address_type = FixedAddressTypeChoices.DONT_CREATE_RECORD
+        ds_ip.update({"description": "Blocked update"})
+        ip.refresh_from_db()
+        self.assertEqual("", ip.description)
+
+        # Covers status fallback, invalid ip type fallback, and ext/cf update branches.
+        ds_ip.adapter.config.fixed_address_type = FixedAddressTypeChoices.RESERVED
+        ds_ip.update(
+            {
+                "status": "UnknownStatus",
+                "ip_addr_type": "unsupported-type",
+                "description": "Final Description",
+                "ext_attrs": {"department": "Matrix Team"},
+                "mac_address": "aa:bb:cc:dd:ee:ff",
+                "fixed_address_comment": "Final Comment",
+            }
+        )
+        ip.refresh_from_db()
+        self.assertEqual(self.config.default_status.id, ip.status_id)
+        self.assertEqual("host", ip.type)
+        self.assertEqual("Final Description", ip.description)
+        self.assertEqual("aa:bb:cc:dd:ee:ff", ip.custom_field_data.get("mac_address"))
+        self.assertEqual("Final Comment", ip.custom_field_data.get("fixed_address_comment"))
+        self.assertEqual("Matrix Team", ip.custom_field_data.get("department"))
