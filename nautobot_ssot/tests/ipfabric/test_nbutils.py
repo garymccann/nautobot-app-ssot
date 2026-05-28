@@ -1211,6 +1211,18 @@ class TestNautobotUtils(TestCase):
         self.assertIsNone(result)
         self.assertTrue(logger.error.called)
 
+    @unittest.mock.patch(
+        "nautobot_ssot.integrations.ipfabric.utilities.nbutils.Tag.objects.get_or_create", autospec=True
+    )
+    @unittest.mock.patch("logging.Logger", autospec=True)
+    def test_get_or_create_tag_object_multiple_returned(self, mock_logger, mock_tag):
+        """Test `get_or_create_tag_object` MultipleObjectsReturned path (nbutils.py lines 373-376)."""
+        mock_tag.side_effect = [Tag.MultipleObjectsReturned]
+        logger = mock_logger("nb_job")
+        result = get_or_create_tag_object(tag_name="Multi-Tag", logger=logger)
+        self.assertIsNone(result)
+        logger.error.assert_called_with("Multiple Tags returned with the name Multi-Tag")
+
     # ===== get_or_create_virtual_chassis_object =====
 
     def test_get_or_create_virtual_chassis_object_existing(self):
