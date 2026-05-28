@@ -368,11 +368,11 @@ def get_or_create_tag_object(  # pylint: disable=too-many-arguments
         )
     except (DjangoBaseDBError, ValidationError):
         if logger:
-            logger.error(f"Unable to create a new Status named {tag_name}")
+            logger.error(f"Unable to create a new Tag named {tag_name}")
         return None
-    except Status.MultipleObjectsReturned:
+    except Tag.MultipleObjectsReturned:
         if logger:
-            logger.error(f"Multiple Statuses returned with the name {tag_name}")
+            logger.error(f"Multiple Tags returned with the name {tag_name}")
         return None
     tag_obj.content_types.add(content_type)
     return tag_obj
