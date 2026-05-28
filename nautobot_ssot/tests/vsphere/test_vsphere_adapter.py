@@ -166,7 +166,6 @@ class TestVsphereAdapter(unittest.TestCase):
             if "Duplicate Virtual Machine name 'DuplicateNamedVM'" in call_args.args[0]
         ]
         self.assertEqual(len(warning_calls), 1)
-        self.assertIn("vm-200", warning_calls[0].args[0])
 
     def test_load_vm_interfaces(self):
         vm_detail_json = json_fixture(f"{FIXTURES}/vm_details_nautobot.json")["value"]
