@@ -16,6 +16,7 @@ from nautobot.dcim.models import (
     VirtualChassis,
 )
 from nautobot.extras.models import Role, Status, Tag
+from nautobot.ipam.models import IPAddress, Prefix, get_default_namespace
 
 try:
     from nautobot.core.testing.utils import AssertNoRepeatedQueries
@@ -30,7 +31,7 @@ class TestNautobotAdapter(TestCase):
 
     def setUp(self):
         device_ct = ContentType.objects.get_for_model(Device)
-        active_status = Status.objects.get(name="Active")
+        self.active_status = Status.objects.get(name="Active")
         self.ssot_tag, _ = Tag.objects.get_or_create(
             name="SSoT Synced from IPFabric",
             defaults={
@@ -43,9 +44,9 @@ class TestNautobotAdapter(TestCase):
         role.content_types.add(device_ct)
         site_lt, _ = LocationType.objects.get_or_create(name="site")
         site_lt.content_types.add(device_ct)
-        self.site1 = Location.objects.create(name="site1", location_type=site_lt, status=active_status)
-        site2 = Location.objects.create(name="site2", location_type=site_lt, status=active_status)
-        self.stack_site = Location.objects.create(name="stack", location_type=site_lt, status=active_status)
+        self.site1 = Location.objects.create(name="site1", location_type=site_lt, status=self.active_status)
+        site2 = Location.objects.create(name="site2", location_type=site_lt, status=self.active_status)
+        self.stack_site = Location.objects.create(name="stack", location_type=site_lt, status=self.active_status)
         self.stack_site.tags.add(self.ssot_tag)
         man1 = Manufacturer.objects.create(name="man1")
         man2 = Manufacturer.objects.create(name="man2")
@@ -56,7 +57,7 @@ class TestNautobotAdapter(TestCase):
         Device.objects.create(
             name="dev1",
             serial="abc",
-            status=active_status,
+            status=self.active_status,
             role=role,
             location=self.site1,
             device_type=dev_type1,
@@ -65,7 +66,7 @@ class TestNautobotAdapter(TestCase):
         Device.objects.create(
             name="dev2",
             serial="def",
-            status=active_status,
+            status=self.active_status,
             role=role,
             location=self.site1,
             device_type=dev_type1,
@@ -74,7 +75,7 @@ class TestNautobotAdapter(TestCase):
         Device.objects.create(
             name="dev3",
             serial="xyz",
-            status=active_status,
+            status=self.active_status,
             role=role,
             location=site2,
             device_type=dev_type2,
@@ -82,7 +83,7 @@ class TestNautobotAdapter(TestCase):
         stack_master = Device.objects.create(
             name="stack1",
             serial="st123",
-            status=active_status,
+            status=self.active_status,
             role=role,
             location=self.stack_site,
             device_type=dev_type2,
@@ -93,11 +94,11 @@ class TestNautobotAdapter(TestCase):
         self.stack.master = stack_master
         self.stack.validated_save()
         for i in range(0, 9):
-            Interface.objects.create(name=f"eth{i}", device=stack_master, type="virtual", status=active_status)
+            Interface.objects.create(name=f"eth{i}", device=stack_master, type="virtual", status=self.active_status)
         Device.objects.create(
             name="stack2",
             serial="st456",
-            status=active_status,
+            status=self.active_status,
             role=role,
             location=self.stack_site,
             device_type=dev_type2,
@@ -108,7 +109,7 @@ class TestNautobotAdapter(TestCase):
         Device.objects.create(
             name="stack3",
             serial="st789",
-            status=active_status,
+            status=self.active_status,
             role=role,
             location=self.stack_site,
             device_type=dev_type2,
@@ -223,3 +224,29 @@ class TestNautobotAdapter(TestCase):
             any("is not tagged" in line for line in captured.output),
             f"Expected 'is not tagged' warning, got: {captured.output}",
         )
+
+    def test_load_interfaces_populates_ip_data(self):
+        """`load_interfaces` reads the first prefetched IP and sets ip_address/subnet_mask/ip_is_primary."""
+        stack_master = self.stack.master
+        int_eth0 = stack_master.interfaces.get(name="eth0")
+
+        prefix, _ = Prefix.objects.get_or_create(
+            prefix="10.0.0.0/24", namespace=get_default_namespace(), status=self.active_status
+        )
+        ip_addr, _ = IPAddress.objects.get_or_create(address="10.0.0.5/24", status=self.active_status, parent=prefix)
+        int_eth0.ip_addresses.add(ip_addr)
+        stack_master.primary_ip4 = ip_addr
+        stack_master.validated_save()
+        stack_master.refresh_from_db()
+
+        self.nb_adapter.load_interfaces(device_record=stack_master, diffsync_device=unittest.mock.Mock())
+
+        loaded = {i.name: i for i in self.nb_adapter.get_all("interface")}
+        # eth0 hits the `if ip_addresses:` branch (line 114)
+        self.assertEqual(loaded["eth0"].ip_address, "10.0.0.5")
+        self.assertEqual(loaded["eth0"].subnet_mask, "255.255.255.0")
+        self.assertTrue(loaded["eth0"].ip_is_primary)
+        # eth1..eth8 hit the `else` branch
+        self.assertIsNone(loaded["eth1"].ip_address)
+        self.assertIsNone(loaded["eth1"].subnet_mask)
+        self.assertFalse(loaded["eth1"].ip_is_primary)
