@@ -1493,41 +1493,11 @@ class TestNautobotUtils(TestCase):
         self.assertEqual(result.name, "TagV-VLAN")
         self.assertTrue(logger.warning.called)
 
-    # ===== create_interface error/tag/status paths =====
+    # ===== create_interface error/tag paths =====
 
-    @unittest.mock.patch(
-        "nautobot_ssot.integrations.ipfabric.utilities.nbutils.Status.objects.get_for_model", autospec=True
-    )
     @unittest.mock.patch("logging.Logger", autospec=True)
-    def test_create_interface_status_multiple_returned(self, mock_logger, mock_status):
-        """Test `create_interface` Status.MultipleObjectsReturned path."""
-        mock_status.return_value.get.side_effect = [Status.MultipleObjectsReturned]
-        logger = mock_logger("nb_job")
-        result = create_interface(self.device, {"name": "StatMulti-Iface"}, logger=logger)
-        self.assertIsNone(result)
-        self.assertTrue(logger.error.called)
-        self.assertIn("Multiple Statuses returned with name Active", logger.error.call_args[0][0])
-
-    @unittest.mock.patch(
-        "nautobot_ssot.integrations.ipfabric.utilities.nbutils.Status.objects.get_for_model", autospec=True
-    )
-    @unittest.mock.patch("logging.Logger", autospec=True)
-    def test_create_interface_status_does_not_exist(self, mock_logger, mock_status):
-        """Test `create_interface` Status.DoesNotExist path."""
-        mock_status.return_value.get.side_effect = [Status.DoesNotExist]
-        logger = mock_logger("nb_job")
-        result = create_interface(self.device, {"name": "StatDNE-Iface"}, logger=logger)
-        self.assertIsNone(result)
-        self.assertTrue(logger.error.called)
-        self.assertIn("Unable to find a Status with the name Active", logger.error.call_args[0][0])
-
-    @unittest.mock.patch(
-        "nautobot_ssot.integrations.ipfabric.utilities.nbutils.Status.objects.get_for_model", autospec=True
-    )
-    @unittest.mock.patch("logging.Logger", autospec=True)
-    def test_create_interface_multiple_returned(self, mock_logger, mock_status):
+    def test_create_interface_multiple_returned(self, mock_logger):
         """Test `create_interface` Interface.MultipleObjectsReturned path."""
-        mock_status.return_value.get.return_value = "mock_status"
         logger = mock_logger("nb_job")
         mock_device = mock.MagicMock()
         mock_device.name = "Mock-Device"
@@ -1538,13 +1508,9 @@ class TestNautobotUtils(TestCase):
             "Multiple Interfaces returned with name Multi-Iface on Device named Mock-Device"
         )
 
-    @unittest.mock.patch(
-        "nautobot_ssot.integrations.ipfabric.utilities.nbutils.Status.objects.get_for_model", autospec=True
-    )
     @unittest.mock.patch("logging.Logger", autospec=True)
-    def test_create_interface_db_error(self, mock_logger, mock_status):
+    def test_create_interface_db_error(self, mock_logger):
         """Test `create_interface` DjangoBaseDBError on get_or_create path."""
-        mock_status.return_value.get.return_value = "mock_status"
         logger = mock_logger("nb_job")
         mock_device = mock.MagicMock()
         mock_device.name = "Mock-Device"
@@ -1553,13 +1519,9 @@ class TestNautobotUtils(TestCase):
         self.assertIsNone(result)
         logger.error.assert_called_with("Unable to create a new Interface named DB-Iface on Device named Mock-Device")
 
-    @unittest.mock.patch(
-        "nautobot_ssot.integrations.ipfabric.utilities.nbutils.Status.objects.get_for_model", autospec=True
-    )
     @unittest.mock.patch("logging.Logger", autospec=True)
-    def test_create_interface_validation_error(self, mock_logger, mock_status):
+    def test_create_interface_validation_error(self, mock_logger):
         """Test `create_interface` ValidationError on get_or_create path."""
-        mock_status.return_value.get.return_value = "mock_status"
         logger = mock_logger("nb_job")
         mock_device = mock.MagicMock()
         mock_device.name = "Mock-Device"

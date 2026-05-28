@@ -536,53 +536,41 @@ def create_interface(
     """
     interface_name = interface_details.pop("name")
     status = interface_details.pop("status", "Active")
+    status_obj = get_or_create_status_object(status, app_label="dcim", model="interface", logger=logger)
+    if not status_obj:
+        if logger:
+            logger.error(
+                f"Unable to set Status of {status} for Interface named {interface_name} on Device named {device_obj.name}"
+            )
+        return None
+    interface_fields = (
+        "description",
+        "enabled",
+        "mac_address",
+        "mtu",
+        "type",
+        "mgmt_only",
+    )
+    defaults = {k: v for k, v in interface_details.items() if k in interface_fields and v}
     try:
-        status_obj = Status.objects.get_for_model(Interface).get(name=status)
-    except Status.MultipleObjectsReturned:
-        if logger:
-            logger.error(
-                f"Multiple Statuses returned with name {status}, "
-                f"and therefore cannot create an Interface named {interface_name}"
-            )
-    except Status.DoesNotExist:
-        if logger:
-            logger.error(
-                f"Unable to find a Status with the name {status}, "
-                f"and therefore cannot create an Interface named {interface_name}"
-            )
-    else:
-        interface_fields = (
-            "description",
-            "enabled",
-            "mac_address",
-            "mtu",
-            "type",
-            "mgmt_only",
+        interface_obj, _ = device_obj.interfaces.get_or_create(
+            name=interface_name, status=status_obj, defaults=defaults
         )
-        defaults = {k: v for k, v in interface_details.items() if k in interface_fields and v}
+    except Interface.MultipleObjectsReturned:
+        if logger:
+            logger.error(f"Multiple Interfaces returned with name {interface_name} on Device named {device_obj.name}")
+    except (DjangoBaseDBError, ValidationError):
+        if logger:
+            logger.error(f"Unable to create a new Interface named {interface_name} on Device named {device_obj.name}")
+    else:
         try:
-            interface_obj, _ = device_obj.interfaces.get_or_create(
-                name=interface_name, status=status_obj, defaults=defaults
-            )
-        except Interface.MultipleObjectsReturned:
-            if logger:
-                logger.error(
-                    f"Multiple Interfaces returned with name {interface_name} on Device named {device_obj.name}"
-                )
+            tag_object(nautobot_object=interface_obj, custom_field=LAST_SYNCHRONIZED_CF_NAME)
         except (DjangoBaseDBError, ValidationError):
             if logger:
-                logger.error(
-                    f"Unable to create a new Interface named {interface_name} on Device named {device_obj.name}"
+                logger.warning(
+                    f"Unable to perform validated_save() on Interface named {interface_name} on Device named {device_obj.name}"
                 )
-        else:
-            try:
-                tag_object(nautobot_object=interface_obj, custom_field=LAST_SYNCHRONIZED_CF_NAME)
-            except (DjangoBaseDBError, ValidationError):
-                if logger:
-                    logger.warning(
-                        f"Unable to perform validated_save() on Interface named {interface_name} on Device named {device_obj.name}"
-                    )
-            return interface_obj
+        return interface_obj
     return None
 
 
