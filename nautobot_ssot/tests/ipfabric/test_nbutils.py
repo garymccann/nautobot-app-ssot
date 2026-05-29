@@ -1542,6 +1542,23 @@ class TestNautobotUtils(TestCase):
         self.assertIsNone(result)
         logger.error.assert_called_with("Unable to create a new Interface named V-Iface on Device named Mock-Device")
 
+    @unittest.mock.patch(
+        "nautobot_ssot.integrations.ipfabric.utilities.nbutils.get_or_create_status_object",
+        return_value=None,
+    )
+    @unittest.mock.patch("logging.Logger", autospec=True)
+    def test_create_interface_status_helper_returns_none(self, mock_logger, _mock_status_helper):
+        """Test `create_interface` returns None and logs when status helper returns None (nbutils.py line 545)."""
+        logger = mock_logger("nb_job")
+        mock_device = mock.MagicMock()
+        mock_device.name = "Mock-Device"
+        result = create_interface(mock_device, {"name": "NoStat-Iface"}, logger=logger)
+        self.assertIsNone(result)
+        mock_device.interfaces.get_or_create.assert_not_called()
+        logger.error.assert_called_with(
+            "Unable to set Status of Active for Interface named NoStat-Iface on Device named Mock-Device"
+        )
+
     @unittest.mock.patch("nautobot_ssot.integrations.ipfabric.utilities.nbutils.tag_object")
     @unittest.mock.patch("logging.Logger", autospec=True)
     def test_create_interface_tag_db_error(self, mock_logger, mock_tag):
