@@ -205,6 +205,28 @@ class TestNautobotAdapter(TestCase):  # pylint: disable=too-many-instance-attrib
             f"VirtualMachine not found for {missing_device}, skipping primary IP assignment."
         )
 
+    def test_sync_complete_ipaddress_not_found_logs_warning(self):
+        """sync_complete logs a warning and skips when the primary IP does not exist in Nautobot."""
+        adapter = self._make_adapter()
+        adapter._primary_ips = [
+            {
+                "device": {"name": "Test VM", "cluster__name": "Test Cluster"},
+                "primary_ip4": "203.0.113.1",
+                "primary_ip6": None,
+            }
+        ]
+
+        adapter.sync_complete(source=MagicMock(), diff=MagicMock())
+
+        self.test_virtualmachine.refresh_from_db()
+        self.assertIsNone(self.test_virtualmachine.primary_ip4)
+        warning_calls = [
+            call_args
+            for call_args in adapter.job.logger.warning.call_args_list
+            if "IPAddress 203.0.113.1 not found" in call_args.args[0]
+        ]
+        self.assertEqual(len(warning_calls), 1)
+
     def test_sync_complete_empty_primary_ips(self):
         """sync_complete does nothing and logs no warnings when _primary_ips is empty."""
         adapter = self._make_adapter()
