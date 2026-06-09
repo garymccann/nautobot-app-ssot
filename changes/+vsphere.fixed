@@ -1,2 +1,0 @@
-Fixed vSphere SSoT `sync_complete` raising `IPAddress.DoesNotExist` when a primary IP was not present in Nautobot.
-Fixed vSphere SSoT `VirtualMachineModel.update` omitting `cluster__name` from the lookup used in `sync_complete`.
