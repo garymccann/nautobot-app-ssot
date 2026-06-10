@@ -191,6 +191,7 @@ nav:
   - Developer Guide:
       - Upgrading from SSoT 2.x to 3.x: "dev/upgrade.md"
       - Extending the App: "dev/extending.md"
+      - ObjectMetadata-Backed Fields: "dev/contrib_object_metadata.md"
       - Developing Jobs: "dev/jobs.md"
       - Debugging Jobs: "dev/debugging.md"
       - Contributing to the App: "dev/contributing.md"
