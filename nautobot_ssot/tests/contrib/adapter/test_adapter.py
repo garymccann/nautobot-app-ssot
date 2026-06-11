@@ -26,7 +26,7 @@ from nautobot_ssot.contrib import (
     NautobotModel,
     RelationshipSideEnum,
 )
-from nautobot_ssot.tests.contrib_base_classes import (
+from nautobot_ssot.tests.contrib.base import (
     NautobotCable,
     NautobotDevice,
     NautobotTenant,
