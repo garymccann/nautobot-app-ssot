@@ -17,7 +17,6 @@ from nautobot.extras.choices import RelationshipTypeChoices
 from nautobot.extras.models.metadata import MetadataType
 from nautobot.ipam import models as ipam_models
 from nautobot.tenancy import models as tenancy_models
-from typing_extensions import TypedDict
 
 from nautobot_ssot.contrib import (
     CustomFieldAnnotation,
@@ -32,11 +31,14 @@ from nautobot_ssot.tests.contrib.adapter.test_adapter import (
 )
 from nautobot_ssot.tests.contrib.base import (
     MockNautobotAdapter,
+    NautobotCable,
     NautobotTenant,
+    ProviderDict,
     ProviderModelCustomRelationship,
     TagDict,
     TagModel,
     TenantModelCustomRelationship,
+    TenantToOneProviderModel,
     TestAdapter,
     TestCaseWithDeviceData,
 )
@@ -53,12 +55,6 @@ class _CoverageJob:
 
     def __init__(self):
         self.logger = MagicMock()
-
-
-class _ProviderDict(TypedDict):
-    """Typed dict describing the interesting fields of a related Provider."""
-
-    name: str
 
 
 class BaseModelCustomRelationshipOneToManyTest(TestCase):
@@ -400,24 +396,9 @@ class _ProviderFKSourceAdapter(NautobotAdapter):
     provider = _ProviderFKSourceModel
 
 
-class _TenantToOneProviderModel(NautobotModel):
-    """Tenant with a DESTINATION-side to-one custom-relationship field (one-to-many)."""
-
-    _model = tenancy_models.Tenant
-    _modelname = "tenant"
-    _identifiers = ("name",)
-    _attributes = ("provider",)
-
-    name: str
-    provider: Annotated[
-        Optional[_ProviderDict],
-        CustomRelationshipAnnotation(name="Test Relationship", side=RelationshipSideEnum.DESTINATION),
-    ] = None
-
-
 class _TenantToOneProviderAdapter(NautobotAdapter):
     top_level = ("tenant",)
-    tenant = _TenantToOneProviderModel
+    tenant = TenantToOneProviderModel
 
 
 class _TenantM2MProvidersModel(NautobotModel):
@@ -430,7 +411,7 @@ class _TenantM2MProvidersModel(NautobotModel):
 
     name: str
     providers: Annotated[
-        List[_ProviderDict],
+        List[ProviderDict],
         CustomRelationshipAnnotation(name="M2M Relationship", side=RelationshipSideEnum.DESTINATION),
     ] = []
 
@@ -479,7 +460,7 @@ class BaseModelCustomRelationshipBranchTests(TestCase):
         """Writing a DESTINATION-side to-one custom-relationship field creates the association."""
         tenant = tenancy_models.Tenant.objects.create(name="DestTenant3")
         circuits_models.Provider.objects.create(name="SrcProvider3")
-        diffsync_tenant = _TenantToOneProviderModel(name="DestTenant3", pk=tenant.pk)
+        diffsync_tenant = TenantToOneProviderModel(name="DestTenant3", pk=tenant.pk)
         diffsync_tenant.adapter = _TenantToOneProviderAdapter(job=MagicMock())
         diffsync_tenant.update({"provider": {"name": "SrcProvider3"}})
         self.assertEqual(extras_models.RelationshipAssociation.objects.filter(relationship=self.one_to_many).count(), 1)
@@ -510,49 +491,26 @@ class BaseModelGenericForeignKeyBranchTests(TestCaseWithDeviceData):
     """Cover the generic-foreign-key bad-content-type branch via a Cable model."""
 
     def test_generic_foreign_key_unknown_content_type_raises(self):
-        """A generic FK pointing at a non-existent content type raises ObjectNotCreated."""
+        """A generic FK pointing at a non-existent content type raises ObjectNotCreated.
 
-        class CableModel(NautobotModel):
-            """Cable model with generic foreign keys to its terminations."""
-
-            _model = dcim_models.Cable
-            _modelname = "cable"
-            _identifiers = (
-                "termination_a__app_label",
-                "termination_a__model",
-                "termination_a__name",
-                "termination_a__device__name",
-                "termination_b__app_label",
-                "termination_b__model",
-                "termination_b__name",
-                "termination_b__device__name",
-            )
-            _attributes = ("status__name",)
-
-            termination_a__app_label: str
-            termination_a__model: str
-            termination_a__name: str
-            termination_a__device__name: str
-            termination_b__app_label: str
-            termination_b__model: str
-            termination_b__name: str
-            termination_b__device__name: str
-            status__name: str
-
+        Uses the shared ``NautobotCable`` model (generic FK terminations); the content-type
+        resolution fails before the object is saved, so a bad ``termination_a__model`` suffices.
+        """
         with self.assertRaises(ObjectNotCreated):
-            CableModel.create(
+            NautobotCable.create(
                 MockNautobotAdapter(job=MagicMock()),
                 {
-                    "termination_a__app_label": "dcim",
-                    "termination_a__model": "not_a_real_model",
                     "termination_a__name": "Ethernet1",
                     "termination_a__device__name": "sw01",
-                    "termination_b__app_label": "dcim",
-                    "termination_b__model": "interface",
                     "termination_b__name": "Ethernet1",
                     "termination_b__device__name": "sw02",
                 },
-                {"status__name": "Active"},
+                {
+                    "termination_a__app_label": "dcim",
+                    "termination_a__model": "not_a_real_model",
+                    "termination_b__app_label": "dcim",
+                    "termination_b__model": "interface",
+                },
             )
 
 

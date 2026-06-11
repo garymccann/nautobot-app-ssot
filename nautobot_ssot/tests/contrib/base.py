@@ -294,3 +294,24 @@ class TenantModelCustomManyTomanyRelationship(NautobotModel):
 
     name: str
     tenants: List[TenantDict] = []
+
+
+class ProviderDict(TypedDict):
+    """Typed dict describing the interesting fields of a related Provider."""
+
+    name: str
+
+
+class TenantToOneProviderModel(NautobotModel):
+    """Tenant with a DESTINATION-side to-one custom-relationship `provider` field (one-to-many)."""
+
+    _model = tenancy_models.Tenant
+    _modelname = "tenant"
+    _identifiers = ("name",)
+    _attributes = ("provider",)
+
+    name: str
+    provider: Annotated[
+        Optional[ProviderDict],
+        CustomRelationshipAnnotation(name="Test Relationship", side=RelationshipSideEnum.DESTINATION),
+    ] = None
