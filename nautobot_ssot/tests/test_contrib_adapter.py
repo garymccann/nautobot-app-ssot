@@ -501,7 +501,7 @@ class NautobotAdapterCustomLoaderTest(TestCase):
             top_level = ("tenant",)
             tenant = TenantModel
 
-            def load_param_description(self, parameter_name, database_object):
+            def load_param_description(self, _parameter_name, _database_object):
                 """Return a fixed value to exercise the custom-loader branch."""
                 return "custom-loaded"
 
