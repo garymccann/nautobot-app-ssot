@@ -321,7 +321,7 @@ class NautobotAdapter(Adapter, BaseNautobotAdapter):  # pylint: disable=too-many
             return None
         if association_count > 1:
             self.job.logger.warning(
-                f"Foreign key ({database_object.__name__}.{parameter_name}) "
+                f"Foreign key ({type(database_object).__name__}.{parameter_name}) "
                 "custom relationship matched two associations - this shouldn't happen."
             )
 
