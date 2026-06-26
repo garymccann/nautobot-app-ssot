@@ -1,0 +1,1 @@
+Fixed a bug in the SSoT contrib adapter where a custom-relationship foreign key matching more than one association raised an `AttributeError` instead of logging a warning.

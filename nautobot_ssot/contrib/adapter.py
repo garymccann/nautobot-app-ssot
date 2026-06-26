@@ -20,6 +20,7 @@ from nautobot_ssot.contrib.base import BaseNautobotAdapter, BaseNautobotModel
 from nautobot_ssot.contrib.types import (
     CustomFieldAnnotation,
     CustomRelationshipAnnotation,
+    ObjectMetadataAnnotation,
     RelationshipSideEnum,
 )
 from nautobot_ssot.utils.cache import ORMCache
@@ -101,6 +102,11 @@ class NautobotAdapter(Adapter, BaseNautobotAdapter):  # pylint: disable=too-many
                 parameters[parameter_name] = database_object.cf[field_key]
             return
 
+        # Handle ObjectMetadata-backed fields. See ObjectMetadataAnnotation docstring for more details.
+        if isinstance(annotation, ObjectMetadataAnnotation):
+            parameters[parameter_name] = self._get_object_metadata_value(database_object, annotation)
+            return
+
         is_custom_relationship = isinstance(annotation, CustomRelationshipAnnotation)
 
         # Handling of foreign keys where the local side is the many and the remote side the one.
@@ -138,6 +144,18 @@ class NautobotAdapter(Adapter, BaseNautobotAdapter):  # pylint: disable=too-many
             parameters[parameter_name] = getattr(self, f"load_param_{parameter_name}")(parameter_name, database_object)
         else:
             parameters[parameter_name] = getattr(database_object, parameter_name)
+
+    @staticmethod
+    def _get_object_metadata_value(database_object, annotation: ObjectMetadataAnnotation):
+        """Return the value of the ObjectMetadata matching the annotation, or None.
+
+        Reads from the prefetched `associated_object_metadata` relation, so callers must
+        prefetch it (handled by `NautobotModel._get_queryset`) to avoid N+1 queries.
+        """
+        for metadata in database_object.associated_object_metadata.all():
+            if metadata.metadata_type.name == annotation.metadata_type_name:
+                return metadata.value
+        return None
 
     def _load_single_object(self, database_object, diffsync_model, parameter_names):
         """Load a single diffsync object from a single database object."""
@@ -312,7 +330,7 @@ class NautobotAdapter(Adapter, BaseNautobotAdapter):  # pylint: disable=too-many
             return None
         if association_count > 1:
             self.job.logger.warning(
-                f"Foreign key ({database_object.__name__}.{parameter_name}) "
+                f"Foreign key ({type(database_object).__name__}.{parameter_name}) "
                 "custom relationship matched two associations - this shouldn't happen."
             )
 
