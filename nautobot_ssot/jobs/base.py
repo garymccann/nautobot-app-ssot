@@ -513,10 +513,6 @@ class DataSyncBaseJob(Job):  # pylint: disable=too-many-instance-attributes
         # NOTE: Disabled for the time being due to ongoing issues.
         # sort_relationships(self.source_adapter, self.target_adapter)
 
-        # Calculate the time after adapter loading for diff calculation
-        if adapter_load_end_time is None:
-            adapter_load_end_time = datetime.now()
-
         self.logger.info("Calculating diffs...")
         self.calculate_diff()
         calculate_diff_time = datetime.now()
