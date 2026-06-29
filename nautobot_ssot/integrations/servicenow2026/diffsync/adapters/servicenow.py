@@ -1,27 +1,24 @@
 """ServiceNow DiffSync adapter for ServiceNow 2026."""
 
-import json
-import logging
-import os
 from collections import defaultdict
+from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 from diffsync import Adapter
+from diffsync.exceptions import ObjectCrudException
 from diffsync.exceptions import ObjectAlreadyExists
+from django.contrib.contenttypes.models import ContentType
 from nautobot.tenancy.models import Tenant
+from nautobot.extras.models.metadata import MetadataType, ObjectMetadata
 
 from nautobot_ssot.integrations.servicenow2026.client import ServiceNowClient
 from nautobot_ssot.integrations.servicenow2026.diffsync import models
 from nautobot_ssot.integrations.servicenow2026.mapping import load_mapping, map_record
 from nautobot_ssot.integrations.servicenow2026.utils import metadata as metadata_utils
 from nautobot_ssot.integrations.servicenow2026.utils.metadata import build_servicenow_url
+from nautobot_ssot.integrations.servicenow2026 import constants
 
-
-def _is_truthy(value: Optional[str]) -> bool:
-    """Return True if a string value represents a truthy flag."""
-    if value is None:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+import requests
 
 
 class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attributes
@@ -105,7 +102,7 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
         self.root_location_sys_id = root_location_sys_id
         self.mapping = {}
         self.loaded_sys_ids: Dict[str, Set[str]] = {}
-        self.dump_fixtures = _is_truthy(os.getenv("NAUTOBOT_SSOT_SERVICENOW_DUMP_FIXTURES"))
+        self._session: Optional[requests.Session] = None
 
     def load(self):
         """Load all ServiceNow data into DiffSync models."""
@@ -143,7 +140,6 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
         mappings = entry.get("mappings", [])
         table_query = entry.get("table_query", {})
         raw_records = list(self._iter_records(table, table_query))
-        self._log_fixture_dump(model_name, table, raw_records)
         records = [self._build_attributes(record, mappings, table, model_name) for record in raw_records]
         records = [record for record in records if record.get("sys_id")]
         records = self._order_records(model_name, records)
@@ -181,12 +177,6 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
                 if self.job:
                     self.job.logger.warning("Duplicate %s with sys_id %s skipped.", model_name, record.get("sys_id"))
 
-    def _log_fixture_dump(self, model_name: str, table: str, records: List[Dict[str, Any]]) -> None:
-        """Log raw ServiceNow records for fixture capture."""
-        logger = self.job.logger if self.job else logging.getLogger(__name__)
-        payload = json.dumps(records, ensure_ascii=True, default=str, sort_keys=True, indent=2)
-        logger.info("ServiceNow fixture dump for %s (%s):\n%s", model_name, table, payload)
-
     def _update_loaded_sys_ids(self, model_name: str, records: List[Dict[str, Any]]) -> None:
         """Track sys_ids loaded for reference validation.
 
@@ -198,10 +188,142 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
             record.get("servicenow_sys_id") or record.get("sys_id") for record in records if record.get("sys_id")
         }
 
+    def create_servicenow_record(self, model_class, ids: Dict[str, Any], attrs: Dict[str, Any]) -> Optional[str]:
+        """Create a ServiceNow record and return its sys_id."""
+        entry = self.mapping.get(model_class._modelname, {})
+        table = entry.get("table")
+        if not table:
+            raise ObjectCrudException(f"No ServiceNow table configured for {model_class._modelname}.")
+        payload = self._build_payload(entry, ids, attrs)
+        result = self._request("post", f"/api/now/table/{table}", payload)
+        if not result:
+            return None
+        return result.get("sys_id")
+
+    def update_servicenow_record(self, model_class, sys_id: Optional[str], attrs: Dict[str, Any]) -> None:
+        """Update a ServiceNow record by sys_id."""
+        if not sys_id:
+            raise ObjectCrudException(f"Missing ServiceNow sys_id for {model_class._modelname} update.")
+        entry = self.mapping.get(model_class._modelname, {})
+        table = entry.get("table")
+        if not table:
+            raise ObjectCrudException(f"No ServiceNow table configured for {model_class._modelname}.")
+        payload = self._build_payload(entry, {}, attrs)
+        if not payload:
+            return
+        self._request("patch", f"/api/now/table/{table}/{sys_id}", payload)
+
+    def delete_servicenow_record(self, model_class, sys_id: Optional[str]) -> None:
+        """Delete a ServiceNow record by sys_id."""
+        if not sys_id:
+            raise ObjectCrudException(f"Missing ServiceNow sys_id for {model_class._modelname} delete.")
+        entry = self.mapping.get(model_class._modelname, {})
+        table = entry.get("table")
+        if not table:
+            raise ObjectCrudException(f"No ServiceNow table configured for {model_class._modelname}.")
+        self._request("delete", f"/api/now/table/{table}/{sys_id}", None)
+
+    def backfill_servicenow_sys_id(self, model_class, identifier_sys_id: Optional[str], sys_id: str) -> None:
+        """Store ServiceNow sys_id metadata for a Nautobot object after create."""
+        if not identifier_sys_id or not str(identifier_sys_id).startswith("nautobot:"):
+            return
+        pk = str(identifier_sys_id).split(":", 1)[1]
+        obj = model_class._model.objects.filter(pk=pk).first()
+        if not obj:
+            if self.job:
+                self.job.logger.warning("Unable to backfill ServiceNow sys_id for %s with pk %s.", model_class._modelname, pk)
+            return
+        entry = self.mapping.get(model_class._modelname, {})
+        table = entry.get("table")
+        instance = self.client.integration.remote_url.rstrip("/")
+        self._set_object_metadata(obj, constants.SERVICENOW_METADATA_SYS_ID, sys_id)
+        if table:
+            self._set_object_metadata(obj, constants.SERVICENOW_METADATA_TABLE, table)
+            self._set_object_metadata(obj, constants.SERVICENOW_METADATA_INSTANCE, instance)
+            url = build_servicenow_url(instance=instance, table=table, sys_id=sys_id)
+            if url:
+                self._set_object_metadata(obj, constants.SERVICENOW_METADATA_URL, url)
+
+    def _set_object_metadata(self, obj, metadata_key: str, value: str) -> None:
+        """Set ObjectMetadata value on a Nautobot object."""
+        metadata_type = MetadataType.objects.filter(name=metadata_key).first()
+        if not metadata_type:
+            return
+        content_type = ContentType.objects.get_for_model(type(obj))
+        if content_type not in metadata_type.content_types.all():
+            metadata_type.content_types.add(content_type)
+        metadata, created = ObjectMetadata.objects.get_or_create(
+            assigned_object_id=obj.id,
+            assigned_object_type=content_type,
+            metadata_type=metadata_type,
+            defaults={"_value": value, "scoped_fields": []},
+        )
+        if not created:
+            if metadata.scoped_fields is None:
+                metadata.scoped_fields = []
+            metadata._value = value
+            metadata.validated_save()
+
+    def _build_payload(self, entry: Dict[str, Any], ids: Dict[str, Any], attrs: Dict[str, Any]) -> Dict[str, Any]:
+        """Build a ServiceNow API payload from identifiers and attributes."""
+        data = {}
+        data.update(ids)
+        data.update(attrs)
+        payload: Dict[str, Any] = {}
+        for mapping in entry.get("mappings", []):
+            field_name = mapping.get("field")
+            if not field_name or field_name not in data:
+                continue
+            value = data[field_name]
+            if value is None or value == "":
+                continue
+            if field_name == "servicenow_sys_id":
+                continue
+            if "column" in mapping:
+                payload[mapping["column"]] = str(value) if isinstance(value, Decimal) else value
+                continue
+            if "reference" in mapping:
+                reference_key = mapping["reference"].get("key")
+                if reference_key:
+                    payload[reference_key] = str(value) if isinstance(value, Decimal) else value
+        return payload
+
+    def _get_session(self) -> requests.Session:
+        """Return a requests Session configured with ServiceNow auth."""
+        if self._session:
+            return self._session
+        session = requests.Session()
+        token = getattr(self.client.backend, "token", None)
+        username = getattr(self.client.backend, "username", None)
+        password = getattr(self.client.backend, "password", None)
+        if token:
+            session.headers.update({"Authorization": f"Bearer {token}", "x-sn-apikey": token})
+        elif username and password:
+            session.auth = (username, password)
+        session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
+        session.verify = self.client.integration.verify_ssl
+        self._session = session
+        return session
+
+    def _request(self, method: str, path: str, payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Perform a ServiceNow REST API request and return the result object."""
+        base_url = self.client.integration.remote_url.rstrip("/")
+        url = f"{base_url}{path}"
+        session = self._get_session()
+        response = session.request(method, url, json=payload)
+        if not response.ok:
+            raise ObjectCrudException(f"ServiceNow API {method.upper()} {url} failed: {response.status_code} {response.text}")
+        if response.status_code == 204:
+            return None
+        data = response.json()
+        if isinstance(data, dict) and "result" in data:
+            return data["result"]
+        return data if isinstance(data, dict) else None
+
     def null_unresolved_references(self, model_name: str, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Clear reference sys_ids that don't exist in loaded datasets."""
         reference_map = {
-            "location": {"tenant_sys_id": "company"},
+            "location": {"tenant__sys_id": "company"},
             "device_type": {"manufacturer_sys_id": "manufacturer"},
             "platform": {"manufacturer_sys_id": "manufacturer"},
             "device": {
@@ -224,7 +346,7 @@ class ServiceNowAdapter(Adapter):  # pylint: disable=too-many-instance-attribute
                 if loaded is not None and value not in loaded:
                     record[field] = None
                     continue
-                if model_name == "location" and field == "tenant_sys_id":
+                if model_name == "location" and field == "tenant__sys_id":
                     if metadata_utils.get_object_by_sys_id(Tenant, value) is None:
                         record[field] = None
         return records

@@ -53,7 +53,11 @@ class _ServiceNow2BaseJob(Job):
         default="pysnc",
         label="ServiceNow Client Backend",
     )
-
+    mapping_path = StringVar(
+        label="Mapping file path",
+        required=False,
+        default="",
+    )
     # mapping_profile = ChoiceVar(
     #     choices=list_mapping_profiles(),
     #     required=False,
@@ -141,11 +145,6 @@ def _parse_csv(value: Optional[str]) -> List[str]:
 class ServiceNowToNautobot(_ServiceNow2BaseJob, DataSource):  # pylint: disable=too-many-instance-attributes
     """Sync data from ServiceNow into Nautobot."""
 
-    mapping_path = StringVar(
-        label="Mapping file path",
-        required=False,
-        default="",
-    )
     filter_mode = ChoiceVar(
         choices=(
             ("none", "None"),
@@ -176,7 +175,7 @@ class ServiceNowToNautobot(_ServiceNow2BaseJob, DataSource):  # pylint: disable=
         super().__init__()
         self.mapping_defaults = {}
 
-    class Meta:  # pylint: disable=too-few-public-methods
+    class Meta(Job.Meta):
         """Metadata about this Job."""
 
         """Metadata about this ServiceNow Data Source Job."""
@@ -252,23 +251,23 @@ class ServiceNowToNautobot(_ServiceNow2BaseJob, DataSource):  # pylint: disable=
 class NautobotToServiceNow(_ServiceNow2BaseJob, DataTarget):  # pylint: disable=too-many-instance-attributes
     """Sync data from Nautobot into ServiceNow."""
 
-    mapping_path = StringVar(
-        label="Mapping file path",
-        required=False,
-        default="",
-    )
-    delete_records = BooleanVar(
-        description="Delete ServiceNow records not present in Nautobot.",
-        default=False,
-    )
+    def __init__(self):
+        """Initialize job defaults."""
+        super().__init__()
+        self.mapping_defaults = {}
 
-    class Meta:  # pylint: disable=too-few-public-methods
-        """Metadata about this Job."""
+    class Meta(Job.Meta):
+        """Metadata about this ServiceNow Data Target Job."""
 
-        name = "Nautobot_to_ServiceNow"
+        name = "Nautobot ⟹ ServiceNow"
+        data_source = "Nautobot"
         data_target = "ServiceNow"
         data_target_icon = static("nautobot_ssot_servicenow/ServiceNow_logo.svg")
         description = "Synchronize data from Nautobot into ServiceNow."
+        has_sensitive_variables = False
+        is_singleton = True
+        soft_time_limit = 21600  # 6 hours
+        time_limit = 86400  # 24 hours
 
     @classmethod
     def data_mappings(cls):
@@ -283,7 +282,7 @@ class NautobotToServiceNow(_ServiceNow2BaseJob, DataTarget):  # pylint: disable=
 
     def load_source_adapter(self):
         """Load Nautobot adapter."""
-        self.source_adapter = TheNautobotAdapter(job=self, sync=self.sync)
+        self.source_adapter = TheNautobotAdapter(job=self, sync=self.sync, include_without_sys_id=True)
         self.source_adapter.load()
 
     def load_target_adapter(self):
@@ -295,12 +294,10 @@ class NautobotToServiceNow(_ServiceNow2BaseJob, DataTarget):  # pylint: disable=
         self.target_adapter = ServiceNowAdapter(client=client, job=self, mapping_path=mapping_path)
         self.target_adapter.load()
 
-    def run(  # pylint: disable=arguments-differ
+    def run(
         self,
         dryrun,
         memory_profiling,
-        integration,
-        backend,
         *args,
         **kwargs,
     ):
@@ -309,12 +306,11 @@ class NautobotToServiceNow(_ServiceNow2BaseJob, DataTarget):  # pylint: disable=
         Args:
             dryrun: Whether to run in dry-run mode.
             memory_profiling: Whether to collect memory profiling data.
-            delete_records: Whether to delete unmatched ServiceNow records.
         """
         self.dryrun = dryrun
         self.memory_profiling = memory_profiling
-        self.integration = integration
-        self.backend = backend
+        self.integration = kwargs.get("servicenow_instance", ExternalIntegration)
+        self.backend = kwargs.get("backend_choice")
         self.mapping_path = kwargs.get("mapping_path")
         self.delete_records = kwargs.get("delete_records")
         self.debug = kwargs.get("debug")

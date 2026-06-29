@@ -11,6 +11,7 @@ from django.db.models import Model
 from nautobot.extras.models.metadata import MetadataType, ObjectMetadata
 from typing_extensions import get_type_hints
 
+from nautobot_ssot.integrations.servicenow2026.utils import metadata as metadata_utils
 
 @dataclass
 class ObjectMetadataAnnotation:
@@ -79,6 +80,14 @@ class ObjectMetadataMixin:
                         "value": value,
                     }
                 )
+                return
+        if "__" in field:
+            related_model_name, lookup = field.split("__", maxsplit=1)
+            if lookup == "sys_id":
+                django_field = cls._model._meta.get_field(related_model_name)
+                related_model = django_field.related_model
+                related_obj = metadata_utils.get_object_by_sys_id(related_model, value)
+                setattr(obj, related_model_name, related_obj)
                 return
         super()._handle_single_field(field, obj, value, relationship_fields, adapter)
 
@@ -209,8 +218,8 @@ class ObjectMetadataMixin:
                 assigned_object_id=obj.id,
                 assigned_object_type=content_type,
                 metadata_type=metadata_type,
-                defaults={"value": value, "scoped_fields": []},
+                defaults={"_value": value, "scoped_fields": []},
             )
             if not created:
-                metadata.value = value
+                metadata._value = value
                 metadata.validated_save()

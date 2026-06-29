@@ -63,9 +63,17 @@ class TheNautobotAdapter(NautobotAdapter):
             database_object: Nautobot ORM object being loaded.
             diffsync_model: DiffSync model class.
         """
+        if parameter_name == "servicenow_sys_id":
+            metadata_value = metadata_utils.get_object_metadata_value(
+                database_object, constants.SERVICENOW_METADATA_SYS_ID
+            )
+            if not metadata_value or not str(metadata_value).strip():
+                metadata_value = f"nautobot:{database_object.pk}" if self.include_without_sys_id else None
+            parameters[parameter_name] = metadata_value
+            return
         related_sys_id_fields = {
             "manufacturer_sys_id": "manufacturer",
-            "tenant_sys_id": "tenant",
+            "tenant__sys_id": "tenant",
             "parent_sys_id": "parent",
             "location_sys_id": "location",
             "device_type_sys_id": "device_type",
@@ -76,17 +84,32 @@ class TheNautobotAdapter(NautobotAdapter):
             if related_obj is None:
                 parameters[parameter_name] = None
                 return
-            parameters[parameter_name] = metadata_utils.get_object_metadata_value(
-                related_obj, constants.SERVICENOW_METADATA_SYS_ID
-            )
+            metadata_value = metadata_utils.get_object_metadata_value(related_obj, constants.SERVICENOW_METADATA_SYS_ID)
+            parameters[parameter_name] = metadata_value if metadata_value else None
             return
         type_hints = get_type_hints(diffsync_model, include_extras=True)
         metadata_for_this_field = getattr(type_hints[parameter_name], "__metadata__", [])
         for metadata in metadata_for_this_field:
             if isinstance(metadata, ObjectMetadataAnnotation):
-                parameters[parameter_name] = self._load_object_metadata_value(database_object, metadata)
+                metadata_value = self._load_object_metadata_value(database_object, metadata)
+                if not metadata_value and self.include_without_sys_id and metadata.key == constants.SERVICENOW_METADATA_SYS_ID:
+                    metadata_value = f"nautobot:{database_object.pk}"
+                parameters[parameter_name] = metadata_value
                 return
         super()._handle_single_parameter(parameters, parameter_name, database_object, diffsync_model)
+
+    def _load_single_object(self, database_object, diffsync_model, parameter_names):
+        """Load a single diffsync object from a single database object."""
+        parameters = {}
+        for parameter_name in parameter_names:
+            self._handle_single_parameter(parameters, parameter_name, database_object, diffsync_model)
+        if self.include_without_sys_id:
+            sys_id = parameters.get("servicenow_sys_id")
+            if not sys_id or not str(sys_id).strip():
+                parameters["servicenow_sys_id"] = f"nautobot:{database_object.pk}"
+        parameters["pk"] = str(database_object.pk)
+        diffsync_model = diffsync_model(**parameters)
+        self.add(diffsync_model)
 
     def _has_sys_id_metadata(self, database_object) -> bool:
         """Return True if object has a ServiceNow sys_id metadata value.

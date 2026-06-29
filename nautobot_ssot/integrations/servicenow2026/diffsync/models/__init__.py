@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Annotated, Optional
 
+from diffsync import DiffSyncModel
 from diffsync.exceptions import ObjectCrudException
 from django.contrib.contenttypes.models import ContentType
 from nautobot.dcim.models import (
@@ -46,7 +47,7 @@ LOCATION_ATTRIBUTES = (
     "name",
     "parent_sys_id",
     "location_type__name",
-    "tenant_sys_id",
+    "tenant__sys_id",
     "status__name",
     "latitude",
     "longitude",
@@ -73,6 +74,38 @@ class ServiceNowBaseModel(ObjectMetadataMixin, NautobotModel):
     sys_id: Optional[str] = None
     servicenow_sys_id: Annotated[str, ObjectMetadataAnnotation(key=constants.SERVICENOW_METADATA_SYS_ID)]
     servicenow_url: Annotated[Optional[str], ObjectMetadataAnnotation(key=constants.SERVICENOW_METADATA_URL)] = None
+    pk: Optional[str] = None
+
+    @classmethod
+    def create(cls, adapter, ids, attrs):
+        """Create an object, using Nautobot ORM only when supported by the adapter."""
+        if hasattr(adapter, "get_from_orm_cache"):
+            return super().create(adapter, ids, attrs)
+        if hasattr(adapter, "create_servicenow_record"):
+            sys_id = adapter.create_servicenow_record(cls, ids, attrs)
+            if not sys_id:
+                raise ObjectCrudException(f"Failed to create {cls._modelname} in ServiceNow; no sys_id returned.")
+            new_ids = ids.copy()
+            new_ids["servicenow_sys_id"] = sys_id
+            adapter.backfill_servicenow_sys_id(cls, ids.get("servicenow_sys_id"), sys_id)
+            return DiffSyncModel.create.__func__(cls, adapter, new_ids, attrs)
+        return DiffSyncModel.create.__func__(cls, adapter, ids, attrs)
+
+    def update(self, attrs):
+        """Update an object, using Nautobot ORM only when supported by the adapter."""
+        if hasattr(self.adapter, "get_from_orm_cache"):
+            return super().update(attrs)
+        if hasattr(self.adapter, "update_servicenow_record"):
+            self.adapter.update_servicenow_record(self.__class__, self.servicenow_sys_id, attrs)
+        return DiffSyncModel.update(self, attrs)
+
+    def delete(self):
+        """Delete an object, using Nautobot ORM only when supported by the adapter."""
+        if hasattr(self.adapter, "get_from_orm_cache"):
+            return super().delete()
+        if hasattr(self.adapter, "delete_servicenow_record"):
+            self.adapter.delete_servicenow_record(self.__class__, self.servicenow_sys_id)
+        return DiffSyncModel.delete(self)
 
 
 def _resolve_metadata_foreign_key(model, sys_id: Optional[str], adapter, label: str):
@@ -374,6 +407,7 @@ class Platform(ServiceNowBaseModel):
             parameters: Field parameters to apply.
             adapter: DiffSync adapter for lookups.
         """
+        parameters = parameters.copy()
         manufacturer_sys_id = parameters.pop("manufacturer_sys_id", None)
         manufacturer = _resolve_metadata_foreign_key(NautobotManufacturer, manufacturer_sys_id, adapter, "manufacturer")
         if manufacturer:
@@ -403,6 +437,7 @@ class DeviceType(ServiceNowBaseModel):
             parameters: Field parameters to apply.
             adapter: DiffSync adapter for lookups.
         """
+        parameters = parameters.copy()
         manufacturer_sys_id = parameters.pop("manufacturer_sys_id", None)
         manufacturer = _resolve_metadata_foreign_key(NautobotManufacturer, manufacturer_sys_id, adapter, "manufacturer")
         if manufacturer:
@@ -431,7 +466,7 @@ class Location(ServiceNowBaseModel):
     parent_sys_id: Optional[str] = None
     location_type__name: Optional[str] = None
     tenant: Optional[NautobotTenant] = None
-    tenant_sys_id: Optional[str] = None
+    tenant__sys_id: Optional[str] = None
     status__name: Optional[str] = None
     latitude: Optional[Decimal] = None
     longitude: Optional[Decimal] = None
@@ -445,14 +480,11 @@ class Location(ServiceNowBaseModel):
             parameters: Field parameters to apply.
             adapter: DiffSync adapter for lookups.
         """
+        parameters = parameters.copy()
         parent_sys_id = parameters.pop("parent_sys_id", None)
         parent = _resolve_metadata_foreign_key(NautobotLocation, parent_sys_id, adapter, "parent location")
         if parent:
             parameters["parent"] = parent
-        tenant_sys_id = parameters.pop("tenant_sys_id", None)
-        tenant = _resolve_metadata_foreign_key(NautobotTenant, tenant_sys_id, adapter, "tenant")
-        if tenant:
-            parameters["tenant"] = tenant
         if obj.pk is None and not parameters.get("location_type__name"):
             raise ObjectCrudException(f"Location '{parameters.get('name')}' missing location_type.")
         super()._update_obj_with_parameters(obj, parameters, adapter)
@@ -486,6 +518,7 @@ class Device(ServiceNowBaseModel):
             parameters: Field parameters to apply.
             adapter: DiffSync adapter for lookups.
         """
+        parameters = parameters.copy()
         context = _resolve_device_foreign_keys(parameters, adapter)
         _ensure_device_requirements(obj, parameters, adapter, context)
         _ensure_device_role(parameters, adapter, obj)

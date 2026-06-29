@@ -24,7 +24,7 @@ location:
         key: "parent"
     - field: "location_type__name"
       column: "location_type"
-    - field: "tenant_sys_id"
+    - field: "tenant__sys_id"
       reference:
         key: "company"
     - field: "full_name"
