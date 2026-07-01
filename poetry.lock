@@ -6050,6 +6050,28 @@ files = [
 diagrams = ["jinja2", "railroad-diagrams"]
 
 [[package]]
+name = "pysnc"
+version = "1.2.1"
+description = "Python SNC (REST) API"
+optional = false
+python-versions = "<4.0,>=3.9"
+groups = ["main"]
+markers = "extra == \"all\" or extra == \"servicenow\""
+files = [
+    {file = "pysnc-1.2.1-py3-none-any.whl", hash = "sha256:54fdfa2d99a5e3cccea6b295b8f1e5649ce221b0c4423fccc4c5b8d09cdccdda"},
+    {file = "pysnc-1.2.1.tar.gz", hash = "sha256:26fba05dbda382ad56727f58a12cec540bc4de773252b569838f9a360f7e86ce"},
+]
+
+[package.dependencies]
+certifi = ">=2026.1.4,<2027.0.0"
+requests = ">=2.32.5,<3.0.0"
+urllib3 = ">=2.6.3,<3.0.0"
+
+[package.extras]
+asyncio = ["asyncio (>=4.0.0,<5.0.0)", "httpx (>=0.28.1,<0.29.0)"]
+oauth = ["requests-oauthlib (>=2.0.0,<3.0.0)"]
+
+[[package]]
 name = "pysocks"
 version = "1.7.1"
 description = "A Python SOCKS client module. See https://github.com/Anorov/PySocks for more information."
@@ -8027,7 +8049,7 @@ propcache = ">=0.2.1"
 
 [extras]
 aci = ["PyYAML"]
-all = ["Jinja2", "PyYAML", "cloudvision", "cvprac", "dnacentersdk", "dnspython", "ijson", "ipfabric", "meraki", "nautobot-device-lifecycle-mgmt", "netutils", "oauthlib", "python-magic", "pytz", "requests", "requests-oauthlib", "six", "slurpit-sdk", "urllib3"]
+all = ["Jinja2", "PyYAML", "cloudvision", "cvprac", "dnacentersdk", "dnspython", "ijson", "ipfabric", "meraki", "nautobot-device-lifecycle-mgmt", "netutils", "oauthlib", "pysnc", "python-magic", "pytz", "requests", "requests-oauthlib", "six", "slurpit-sdk", "urllib3"]
 aristacv = ["cloudvision", "cvprac"]
 bootstrap = []
 citrix-adm = ["netutils", "requests", "urllib3"]
@@ -8038,10 +8060,10 @@ ipfabric = ["httpx", "ipfabric", "netutils"]
 meraki = ["meraki"]
 nautobot-device-lifecycle-mgmt = ["nautobot-device-lifecycle-mgmt"]
 pysnow = ["ijson", "oauthlib", "python-magic", "pytz", "requests", "requests-oauthlib", "six"]
-servicenow = ["Jinja2", "PyYAML", "ijson", "oauthlib", "python-magic", "pytz", "requests", "requests-oauthlib", "six"]
+servicenow = ["Jinja2", "PyYAML", "ijson", "oauthlib", "pysnc", "python-magic", "pytz", "requests", "requests-oauthlib", "six"]
 slurpit = ["slurpit-sdk"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.15"
-content-hash = "f1d5ac2ab7d92092eb400bca71f3d108421850e03dca0b101649ec302325ce92"
+content-hash = "a8a6480a0723d76ce1a4acc3724fa7a75c02cd1d934bd822ebfd38f1ddb121b1"

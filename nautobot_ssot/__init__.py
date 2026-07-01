@@ -109,6 +109,7 @@ class NautobotSSOTAppConfig(NautobotAppConfig):
         "enable_librenms": False,
         "enable_meraki": False,
         "enable_servicenow": False,
+        "enable_servicenow2026": False,
         "enable_slurpit": False,
         "enable_solarwinds": False,
         "enable_itential": False,
@@ -128,6 +129,7 @@ class NautobotSSOTAppConfig(NautobotAppConfig):
     config_view_name = "plugins:nautobot_ssot:config"
     docs_view_name = "plugins:nautobot_ssot:docs"
     searchable_models = ["sync"]
+    template_extensions = "integrations.servicenow2026.template_extensions.template_extensions"
 
     def ready(self):
         """Trigger callback when database is ready."""

@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ServiceNow 2026 Mapping Schema",
+  "type": "object",
+  "additionalProperties": {
+    "type": "object",
+    "properties": {
+      "table": {"type": "string"},
+      "table_query": {"type": "object"},
+      "defaults": {
+        "type": "object",
+        "additionalProperties": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "number"},
+            {"type": "boolean"},
+            {"type": "null"}
+          ]
+        }
+      },
+      "mappings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "field": {"type": "string"},
+            "column": {"type": "string"},
+            "transform": {
+              "oneOf": [
+                {"type": "string"},
+                {"type": "array", "items": {"type": "string"}},
+                {"type": "object"}
+              ]
+            },
+            "reference": {
+              "type": "object",
+              "properties": {
+                "key": {"type": "string"}
+              },
+              "required": ["key"],
+              "additionalProperties": true
+            }
+          },
+          "required": ["field"],
+          "additionalProperties": true
+        }
+      }
+    },
+    "required": ["table", "mappings"],
+    "additionalProperties": true
+  }
+}

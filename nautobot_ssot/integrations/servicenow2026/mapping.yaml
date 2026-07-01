@@ -1,0 +1,74 @@
+---
+company:
+  table: "core_company"
+  mappings:
+    - field: "name"
+      column: "name"
+manufacturer:
+  table: "core_company"
+  table_query:
+    manufacturer: true
+  mappings:
+    - field: "name"
+      column: "name"
+location:
+  table: "cmn_location"
+  defaults:
+    location_type__name: "Demo"
+    status__name: "Active"
+  mappings:
+    - field: "name"
+      column: "name"
+    - field: "parent_sys_id"
+      reference:
+        key: "parent"
+    - field: "location_type__name"
+      column: "location_type"
+    - field: "tenant_sys_id"
+      reference:
+        key: "company"
+    - field: "full_name"
+      column: "full_name"
+    - field: "latitude"
+      column: "latitude"
+      transform: "to_latitude"
+    - field: "longitude"
+      column: "longitude"
+      transform: "to_longitude"
+device_type:
+  table: "cmdb_model"
+  mappings:
+    - field: "model"
+      column: "name"
+    - field: "manufacturer_sys_id"
+      reference:
+        key: "manufacturer"
+    - field: "part_number"
+      column: "model_number"
+platform:
+  table: "cmdb_model"
+  mappings:
+    - field: "name"
+      column: "name"
+    - field: "manufacturer_sys_id"
+      reference:
+        key: "manufacturer"
+device:
+  table: "cmdb_ci_netgear"
+  defaults:
+    status__name: "Active"
+    role__name: "Administrative"
+  mappings:
+    - field: "name"
+      column: "name"
+    - field: "location_sys_id"
+      reference:
+        key: "location"
+    - field: "device_type_sys_id"
+      reference:
+        key: "model_id"
+    - field: "platform_sys_id"
+      reference:
+        key: "platform"
+    - field: "serial"
+      column: "serial_number"
