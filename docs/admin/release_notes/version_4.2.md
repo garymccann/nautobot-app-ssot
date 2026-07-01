@@ -9,6 +9,30 @@ This document describes all new features and changes in the release. The format 
 
 <!-- towncrier release notes start -->
 
+## [v4.2.2 (2026-04-12)](https://github.com/nautobot/nautobot-app-ssot/releases/tag/v4.2.2)
+
+### Changed
+
+- [#1184](https://github.com/nautobot/nautobot-app-ssot/issues/1184) - Deferred the missing python-magic warning in pysnow to only emit when attachment upload is attempted, rather than at import time.
+
+### Fixed
+
+- [#NTC-5084](https://github.com/nautobot/nautobot-app-ssot/issues/NTC-5084) - Fixed dnac latitude and longitude in nautobot adapter to match the model default and get diff to work.
+- [#1179](https://github.com/nautobot/nautobot-app-ssot/issues/1179) - Fixed NautobotIPAssignment class update method by coverting IP address to string for checking IPv6.
+
+### Housekeeping
+
+- Rebaked from the cookie `nautobot-app-v3.1.3`.
+
+## [v4.2.1 (2026-04-01)](https://github.com/nautobot/nautobot-app-ssot/releases/tag/v4.2.1)
+
+### Fixed
+
+- [#1155](https://github.com/nautobot/nautobot-app-ssot/issues/1155) - Support uv controlled development environment to run unittest.
+- [#1160](https://github.com/nautobot/nautobot-app-ssot/issues/1160) - Fixed a bug in the DNA Center integration where the get_locations method was not correctly paginating the results.
+- [#1162](https://github.com/nautobot/nautobot-app-ssot/issues/1162) - Fixed SSoT tests that assumed integration/example Job records were preloaded, so they now pass regardless of local integration enablement settings.
+- [#1165](https://github.com/nautobot/nautobot-app-ssot/issues/1165) - Fixed maintainer
+
 ## [v4.2.0 (2025-03-23)](https://github.com/nautobot/nautobot-app-ssot/releases/tag/v4.2.0)
 
 ### Added

@@ -156,6 +156,9 @@ nav:
       - Compatibility Matrix: "admin/compatibility_matrix.md"
       - Release Notes:
           - "admin/release_notes/index.md"
+          - v4.5: "admin/release_notes/version_4.5.md"
+          - v4.4: "admin/release_notes/version_4.4.md"
+          - v4.3: "admin/release_notes/version_4.3.md"
           - v4.2: "admin/release_notes/version_4.2.md"
           - v4.1: "admin/release_notes/version_4.1.md"
           - v4.0: "admin/release_notes/version_4.0.md"
@@ -191,6 +194,7 @@ nav:
   - Developer Guide:
       - Upgrading from SSoT 2.x to 3.x: "dev/upgrade.md"
       - Extending the App: "dev/extending.md"
+      - ObjectMetadata-Backed Fields: "dev/contrib_object_metadata.md"
       - Developing Jobs: "dev/jobs.md"
       - ServiceNow 2026 Design: "dev/servicenow2026_design.md"
       - Debugging Jobs: "dev/debugging.md"
